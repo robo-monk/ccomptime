@@ -1,27 +1,38 @@
 #include "../ccomptime.h"
 #include "stdio.h"
 
-CCT_CTX(
-    CCT_DEFINE(ON_EXIT on_exit);
+$comptime_ctx(
+    void helper() { printf("helper called\n"); }
 
-    void on_exit() { printf("\nhellooo on exit dump called\n"); }
+    void on_exit() { printf("we niggas are exiting and shit"); });
 
-    void helper() { printf("helper called\n"); });
+// #ifdef COMPTIME
+// void helper() { printf("helper called\n"); }
+// #endif
+//
+//
+int result = 0;
 
-CCT_DO({
+int fibonacci(int n) {
+  if (n < 2)
+    return n;
+  return fibonacci(n - 1) + fibonacci(n - 2);
+}
+
+$comptime({
   int i = 0;
   while (i++ < 10) {
-    helper();
-    printf("hmm %d \" and this \"\n", i);
+    const int r = fibonacci(i);
+    printf("fibfib(%d) = %d\n", i, result);
+    result += r;
   }
+
+  printf("\n\n --- FINAL RESULT IS ... %d  ----\n", result);
 });
 
 int main() {
-  CCT_DO({
-    printf("er?\n");
-    printf("yes?\n");
-  });
+  CCT_DO({ printf("hello from: comptime from main(%d) \n\n", result); });
 
-  printf("hello!");
+  printf("runtime: hello!");
   return 0;
 }

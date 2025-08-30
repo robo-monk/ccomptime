@@ -1,3 +1,9 @@
+```c
+$comptime({
+    CCT_PUSH_INLINE_CODE("void x_%s() {}", v);
+})
+```
+
 # 1) bootstrap the driver
 cc -O2 -o nob nob.c          # or cl nob.c on MSVC
 ./nob                        # -> build/ccomptime-clang

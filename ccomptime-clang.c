@@ -4,8 +4,11 @@
 //
 // Runtime dependency: none (self-contained). Uses nob.h internally.
 
+#define NOB_STRIP_PREFIX
 #define NOB_IMPLEMENTATION
 #include "nob.h"
+
+#define CCT_MAIN "cct_main"
 
 static const char *TMP_DIR = "build/cctmp";
 
@@ -25,17 +28,21 @@ static const char *MARK_DO_END = "/*CCT_DO_END*/";
 #include <stdlib.h>
 #include <string.h>
 
-// Simple unescape for C string literals
-// Input:  a C string literal including quotes ("...")
-// Output: newly allocated unescaped string (caller must free)
-// Supports: \n \r \t \\ \" \'
-// Ignores unknown escapes (just copies the char after '\')
-
 typedef struct {
   char **items;
   size_t count, capacity;
 } VecStr;
 static void vpush(VecStr *v, char *s) { nob_da_append(v, s); }
+
+typedef struct {
+  size_t start, end;
+  char *contents;
+} Block;
+
+typedef struct {
+  size_t count, capacity;
+  Block *items;
+} Blocks;
 
 static char *dup_range(const char *a, const char *b) {
   size_t n = (size_t)(b - a);
@@ -47,16 +54,22 @@ static char *dup_range(const char *a, const char *b) {
 }
 
 static void find_blocks(const char *text, const char *beg, const char *end,
-                        VecStr *out) {
+                        Blocks *blocks) {
   const char *p = text;
   while (1) {
     const char *s = strstr(p, beg);
+    const size_t start_index = s - p;
     if (!s)
       break;
     const char *e = strstr(s + strlen(beg), end);
+    const size_t end_index = e - (s + strlen(beg));
     if (!e)
       break;
-    vpush(out, dup_range(s + strlen(beg), e));
+
+    Block b = {.contents = dup_range(s + strlen(beg), e),
+               .start = start_index,
+               .end = end_index};
+    da_append(blocks, b);
     p = e + strlen(end);
   }
 }
@@ -119,35 +132,60 @@ void parse_stringified_ccode(const char *line, Nob_String_Builder *out) {
   }
 }
 
-static char *gen_runner_c(VecStr *ctx, VecStr *runi, VecStr *runs, VecStr *dos,
-                          VecStr *defines, const char *vals_path) {
+static char *gen_runner_c(String_Builder *source, Blocks *ctx, Blocks *runi,
+                          Blocks *runs, Blocks *dos, Blocks *defines,
+                          const char *vals_path) {
   Nob_String_Builder sb = {0};
-  nob_sb_appendf(
-      &sb, "#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n"
-           "// --- Context ---\n");
+
+  // nob_sb_appendf(
+  //     &sb, "#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n"
+  //          "// --- Context ---\n");
+
+  sb_appendf(&sb, "\n#define COMPTIME\n");
+
+  sb_appendf(&sb, "\n// -- SOURCE FILE START -- \n");
+  sb_append_buf(&sb, source->items, source->count - 1);
+  sb_appendf(&sb, "\n// -- SOURCE FILE END -- \n\n");
+  // nob_sb_append_cstr(&sb, source);
+
+  // nob_sb_appendf(
+  //     &sb, "#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n"
+  //          "// --- Context ---\n");
 
   for (size_t i = 0; i < defines->count; i++) {
+    Block b = defines->items[i];
     Nob_String_Builder out = {0};
-    parse_stringified_ccode(defines->items[i], &out);
-    nob_sb_append_null(&out);
-    nob_sb_appendf(&sb, "#define %s\n", out.items);
+    parse_stringified_ccode(b.contents, &out);
+    sb_append_null(&out);
+    sb_appendf(&sb, "#define %s\n", out.items);
+
+    nob_log(INFO, "\appending... \n%s\n", out.items);
+
+    // ink the block
+    // b.start - b.end
+    for (size_t i = b.start; i < b.end; i++) {
+      // b
+    }
   }
 
-  for (size_t i = 0; i < ctx->count; i++) {
-    nob_sb_append_cstr(&sb, ctx->items[i]);
-    nob_sb_append_cstr(&sb, "\n");
-  }
-  for (size_t i = 0; i < runi->count; i++)
-    nob_sb_appendf(
-        &sb, "static long long eval_I%zu(void){ return (long long)(%s); }\n", i,
-        runi->items[i]);
-  for (size_t i = 0; i < runs->count; i++)
-    nob_sb_appendf(&sb, "static const char* eval_S%zu(void){ return (%s); }\n",
-                   i, runs->items[i]);
+  // for (size_t i = 0; i < ctx->count; i++) {
+  //   Block b = ctx->items[i];
+  //   nob_log(INFO, "CTX :: appending... \n%s\n", b.contents);
+  //   nob_sb_append_cstr(&sb, b.contents);
+  //   nob_sb_append_cstr(&sb, "\n");
+  // }
+  // for (size_t i = 0; i < runi->count; i++)
+  //   nob_sb_appendf(
+  //       &sb, "static long long eval_I%zu(void){ return (long long)(%s); }\n",
+  //       i, runi->items[i]);
+  // for (size_t i = 0; i < runs->count; i++)
+  //   nob_sb_appendf(&sb, "static const char* eval_S%zu(void){ return (%s);
+  //   }\n",
+  //                  i, runs->items[i]);
 
   for (size_t i = 0; i < dos->count; i++) {
-
-    const char *line = dos->items[i];
+    Block b = dos->items[i];
+    const char *line = b.contents;
     Nob_String_Builder out = {0};
 
     parse_stringified_ccode(line, &out);
@@ -288,12 +326,14 @@ static const char *real_cc_path(void) {
 static const char *process_tu(const char *src, int argc, char **argv,
                               Driver drv, size_t tu_index) {
   // paths
-  if (!nob_mkdir_if_not_exists("build")) { /*noop*/
+  if (!mkdir_if_not_exists("build")) { /*noop*/
   }
-  if (!nob_mkdir_if_not_exists(TMP_DIR)) { /*noop*/
+  if (!mkdir_if_not_exists(TMP_DIR)) { /*noop*/
   }
 
-  const char *base = nob_path_name(src);
+  nob_log(INFO, "processing %s\n", src);
+
+  const char *base = path_name(src);
   const char *stem = base; // naive; could strip .c
   Nob_String_Builder pp_path = {0}, vals_path = {0}, runner_c = {0},
                      runner_exe = {0}, final_c = {0};
@@ -302,23 +342,26 @@ static const char *process_tu(const char *src, int argc, char **argv,
 #else
   const char *exe_ext = "";
 #endif
-  nob_sb_appendf(&pp_path, "%s/%s.%zu.pp.c", TMP_DIR, stem, tu_index);
-  nob_sb_appendf(&vals_path, "%s/%s.%zu.vals", TMP_DIR, stem, tu_index);
-  nob_sb_appendf(&runner_c, "%s/%s.%zu.runner.c", TMP_DIR, stem, tu_index);
-  nob_sb_appendf(&runner_exe, "%s/%s.%zu.runner%s", TMP_DIR, stem, tu_index,
-                 exe_ext);
-  nob_sb_appendf(&final_c, "%s/%s.%zu.final.c", TMP_DIR, stem, tu_index);
-  nob_sb_append_null(&pp_path);
-  nob_sb_append_null(&vals_path);
-  nob_sb_append_null(&runner_c);
-  nob_sb_append_null(&runner_exe);
-  nob_sb_append_null(&final_c);
+  sb_appendf(&pp_path, "%s/%s.%zu.pp.c", TMP_DIR, stem, tu_index);
+  sb_appendf(&vals_path, "%s/%s.%zu.vals", TMP_DIR, stem, tu_index);
+  sb_appendf(&runner_c, "%s/%s.%zu.runner.c", TMP_DIR, stem, tu_index);
+  sb_appendf(&runner_exe, "%s/%s.%zu.runner%s", TMP_DIR, stem, tu_index,
+             exe_ext);
+  sb_appendf(&final_c, "%s/%s.%zu.final.c", TMP_DIR, stem, tu_index);
+
+  sb_append_null(&pp_path);
+  sb_append_null(&vals_path);
+  sb_append_null(&runner_c);
+  sb_append_null(&runner_exe);
 
   // 1) preprocess with comments preserved
   {
     Nob_Cmd cmd = {0};
-    nob_cmd_append(&cmd, drv.real_cc ? drv.real_cc : real_cc_path(), "-E", "-P",
-                   "-CC");
+    nob_cmd_append(
+        &cmd, drv.real_cc ? drv.real_cc : real_cc_path(), "-E", "-P", "-CC",
+        "-DCOMPTIME",
+        /* rename a potenial "main" func to avoid entry point conflicts */
+        "-Dmain=__user_main");
     // forward relevant flags (+ their args)
     for (int i = 1; i < argc; i++) {
       const char *a = argv[i];
@@ -342,31 +385,35 @@ static const char *process_tu(const char *src, int argc, char **argv,
   }
 
   // 2) read preprocessed text
-  Nob_String_Builder pp_text = {0};
-  if (!nob_read_entire_file(pp_path.items, &pp_text))
+  String_Builder pp_text = {0};
+  if (!read_entire_file(pp_path.items, &pp_text))
     return NULL;
+
   nob_sb_append_null(&pp_text);
 
   // 3) extract blocks
-  VecStr ctx = {0}, runi = {0}, runs = {0}, dos = {0}, defines = {0};
+  // VecStr ctx = {0}, runi = {0}, runs = {0}, dos = {0}, defines = {0};
+  Blocks ctx = {0}, defines = {0}, dos = {0};
   find_blocks(pp_text.items, MARK_CTX_BEG, MARK_CTX_END, &ctx);
-  find_blocks(pp_text.items, MARK_RUNI_BEG, MARK_RUNI_END, &runi);
-  find_blocks(pp_text.items, MARK_RUNS_BEG, MARK_RUNS_END, &runs);
+  // find_blocks(pp_text.items, MARK_RUNI_BEG, MARK_RUNI_END, &runi);
+  // find_blocks(pp_text.items, MARK_RUNS_BEG, MARK_RUNS_END, &runs);
   find_blocks(pp_text.items, MARK_DO_BEG, MARK_DO_END, &dos);
   find_blocks(pp_text.items, MARK_DEFINE_BEG, MARK_DEFINE_END, &defines);
 
   // 4) generate runner.c
   char *runner_src =
-      gen_runner_c(&ctx, &runi, &runs, &dos, &defines, vals_path.items);
+      gen_runner_c(&pp_text, &ctx, NULL, NULL, &dos, &defines, vals_path.items);
 
   if (!nob_write_entire_file(runner_c.items, runner_src, strlen(runner_src)))
     return NULL;
   NOB_FREE(runner_src);
 
-  // 5) compile runner with same includes/defines/lang flags
+  // 5) compile runner with
+  // same includes/defines/lang
+  // flags
   {
     Nob_Cmd cmd = {0};
-    nob_cmd_append(&cmd, drv.real_cc ? drv.real_cc : real_cc_path());
+    nob_cmd_append(&cmd, "clang");
     // forward relevant flags
     for (int i = 1; i < argc; i++) {
       const char *a = argv[i];
@@ -379,6 +426,7 @@ static const char *process_tu(const char *src, int argc, char **argv,
         }
       }
     }
+
     nob_cc_output(&cmd, runner_exe.items);
     nob_cc_inputs(&cmd, runner_c.items);
     if (!nob_cmd_run(&cmd))
@@ -391,35 +439,36 @@ static const char *process_tu(const char *src, int argc, char **argv,
     nob_cmd_append(&cmd, runner_exe.items);
     if (!nob_cmd_run(&cmd))
       return NULL;
-    // runner writes vals_path itself
+    // runner writes vals_path
+    // itself
   }
 
   // 7) parse vals, rewrite TU
-  Values vals = {0};
-  if (!parse_vals(vals_path.items, &vals))
-    return NULL;
+  //   Values vals = {0};
+  //   if (!parse_vals(vals_path.items, &vals))
+  //     return NULL;
 
-  char *t1 = remove_blocks(pp_text.items, MARK_CTX_BEG, MARK_CTX_END);
-  char *t2 = remove_blocks(t1, MARK_DO_BEG, MARK_DO_END);
+  //   char *t1 = remove_blocks(pp_text.items, MARK_CTX_BEG, MARK_CTX_END);
+  //   char *t2 = remove_blocks(t1, MARK_DO_BEG, MARK_DO_END);
 
-  VecStr R_I = {0}, R_S = {0};
-  for (size_t i = 0; i < vals.I.count; i++) {
-    const char *v = vals.I.items[i] ? vals.I.items[i] : "0";
-    vpush(&R_I, nob_temp_strdup(v));
-  }
-  for (size_t i = 0; i < vals.S.count; i++) {
-    const char *v = vals.S.items[i] ? vals.S.items[i] : "";
-    Nob_String_Builder sb = {0};
-    nob_sb_append_cstr(&sb, "\"");
-    nob_sb_append_cstr(&sb, v);
-    nob_sb_append_cstr(&sb, "\"");
-    nob_sb_append_null(&sb);
-    vpush(&R_S, sb.items);
-  }
-  char *t3 = replace_blocks(t2, MARK_RUNI_BEG, MARK_RUNI_END, &R_I);
-  char *t4 = replace_blocks(t3, MARK_RUNS_BEG, MARK_RUNS_END, &R_S);
+  //   VecStr R_I = {0}, R_S = {0};
+  //   for (size_t i = 0; i < vals.I.count; i++) {
+  //     const char *v = vals.I.items[i] ? vals.I.items[i] : "0";
+  //     vpush(&R_I, nob_temp_strdup(v));
+  //   }
+  //   for (size_t i = 0; i < vals.S.count; i++) {
+  //     const char *v = vals.S.items[i] ? vals.S.items[i] : "";
+  //     Nob_String_Builder sb = {0};
+  //     nob_sb_append_cstr(&sb, "\"");
+  //     nob_sb_append_cstr(&sb, v);
+  //     nob_sb_append_cstr(&sb, "\"");
+  //     nob_sb_append_null(&sb);
+  //     vpush(&R_S, sb.items);
+  //   }
+  //   char *t3 = replace_blocks(t2, MARK_RUNI_BEG, MARK_RUNI_END, &R_I);
+  //   char *t4 = replace_blocks(t3, MARK_RUNS_BEG, MARK_RUNS_END, &R_S);
 
-  if (!nob_write_entire_file(final_c.items, t4, strlen(t4)))
+  if (!nob_write_entire_file(final_c.items, pp_text.items, pp_text.count))
     return NULL;
   return nob_temp_strdup(final_c.items);
 }
@@ -428,14 +477,19 @@ int main(int argc, char **argv) {
   NOB_GO_REBUILD_URSELF(argc, argv);
 
   if (argc < 2) {
-    nob_log(NOB_ERROR, "usage: %s [clang-like args] file.c ...", argv[0]);
+    nob_log(NOB_ERROR,
+            "usage: %s "
+            "[clang-like "
+            "args] file.c ...",
+            argv[0]);
     return 1;
   }
 
   Driver drv = {0};
   drv.real_cc = real_cc_path();
 
-  // collect inputs; also detect global -E
+  // collect inputs; also
+  // detect global -E
   VecStr sources = {0};
   int dashdash = 0;
   for (int i = 1; i < argc; i++) {
@@ -449,7 +503,8 @@ int main(int argc, char **argv) {
       vpush(&sources, argv[i]);
   }
 
-  // map old source -> rewritten path
+  // map old source ->
+  // rewritten path
   typedef struct {
     const char *oldp;
     const char *newp;
@@ -473,7 +528,9 @@ int main(int argc, char **argv) {
     MPUSH(sources.items[i], rew);
   }
 
-  // Build final argv by replacing inputs with rewritten paths
+  // Build final argv by
+  // replacing inputs with
+  // rewritten paths
   Nob_Cmd final = {0};
   nob_cmd_append(&final, drv.real_cc);
   for (int i = 1; i < argc; i++) {
@@ -490,10 +547,13 @@ int main(int argc, char **argv) {
       nob_cmd_append(&final, rep);
       continue;
     }
-    // pass-thru everything else as-is
+    // pass-thru everything
+    // else as-is
     nob_cmd_append(&final, tok);
-    // NOTE: keep two-arg flags paired; clang expects the next token. We forward
-    // unchanged.
+    // NOTE: keep two-arg flags
+    // paired; clang expects
+    // the next token. We
+    // forward unchanged.
     if ((strcmp(tok, "-o") == 0 || strcmp(tok, "-isystem") == 0 ||
          strcmp(tok, "-include") == 0 || strcmp(tok, "-imacros") == 0 ||
          strcmp(tok, "-x") == 0) &&
@@ -502,7 +562,10 @@ int main(int argc, char **argv) {
     }
   }
 
-  // Execute underlying clang with swapped sources
+  nob_cmd_append(&final, "-D__user_main=main");
+
+  // Execute underlying clang
+  // with swapped sources
   if (!nob_cmd_run(&final))
     return 1;
   return 0;

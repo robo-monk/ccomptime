@@ -20,4 +20,14 @@
 #define CCT_DEFINE(macro) /*CCT_DEFINE_BEGIN*/                                 \
   VAR_LINE(#macro)        /*CCT_DEFINE_END*/
 
+#define CCT_ON_EXIT(block)                                                     \
+  CCT_DEFINE(ON_EXIT _on_exit);                                                \
+  void _on_exit() { block }
+
+#define CCT_PUSH_INLINE_CODE(string)
+
+#define $comptime_ctx CCT_CTX
+#define $comptime CCT_DO
+#define $comptime_int CCT_RUNI
+#define $comptime_str CCT_RUNS
 #endif /* CCOMPTIME_H */
