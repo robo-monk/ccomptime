@@ -28,6 +28,8 @@ static const char *MARK_DO_END = "/*CCT_DO_END*/";
 #include <stdlib.h>
 #include <string.h>
 
+typedef struct Line Line;
+
 typedef struct {
   char **items;
   size_t count, capacity;
@@ -36,7 +38,7 @@ static void vpush(VecStr *v, char *s) { nob_da_append(v, s); }
 
 typedef struct {
   size_t start, end;
-  char *contents;
+  Line *line;
 } Block;
 
 typedef struct {
@@ -53,24 +55,115 @@ static char *dup_range(const char *a, const char *b) {
   return s;
 }
 
-static void find_blocks(const char *text, const char *beg, const char *end,
-                        Blocks *blocks) {
-  const char *p = text;
-  while (1) {
-    const char *s = strstr(p, beg);
-    const size_t start_index = s - p;
-    if (!s)
-      break;
-    const char *e = strstr(s + strlen(beg), end);
-    const size_t end_index = e - (s + strlen(beg));
-    if (!e)
-      break;
+struct Line {
+  Line *next;
+  Line *prev;
 
-    Block b = {.contents = dup_range(s + strlen(beg), e),
-               .start = start_index,
-               .end = end_index};
-    da_append(blocks, b);
-    p = e + strlen(end);
+  size_t index;
+  char *text;
+};
+
+typedef struct {
+  Line *head;
+  Line *tail;
+  size_t count;
+} Lines;
+
+typedef struct {
+  Lines lines;
+  String_Builder source;
+} SourceCode;
+
+void lines_debug(Lines *lines) {
+  nob_log(INFO, "-- DEBUG LINES (length: %zu) --", lines->count);
+  for (Line *line = lines->head; line != NULL; line = line->next) {
+    printf("%s\n", line->text);
+  }
+  printf("----\n");
+}
+
+Line *lines_find_line_index(Lines *line, size_t index) {
+  for (Line *l = line->head; l != NULL; l = l->next) {
+    if (l->index == index) {
+      return l;
+    }
+  }
+  return NULL;
+}
+
+void lines_append_new(Lines *lines, char *text) {
+  Line *line = malloc(sizeof(Line));
+  line->text = text;
+  line->index = lines->count++;
+  if (!lines->head) {
+    lines->head = line;
+  }
+
+  if (lines->tail) {
+    lines->tail->next = line;
+  }
+
+  line->prev = lines->tail;
+  lines->tail = line;
+}
+
+void lines_to_sb(Lines *lines, String_Builder *sb) {
+  for (Line *line = lines->head; line != NULL; line = line->next) {
+    sb_appendf(sb, "%s\n", line->text);
+  }
+  sb_append_null(sb);
+}
+
+Lines lines_from_source(String_Builder *source) {
+  Lines lines = {0};
+
+  String_Builder buffer = {0};
+#define append_buffer_to_lines()                                               \
+  do {                                                                         \
+    sb_append_null(&buffer);                                                   \
+    lines_append_new(&lines, strdup(buffer.items));                            \
+    buffer.count = 0;                                                          \
+  } while (0)
+
+  for (int i = 0; i < source->count; i++) {
+    const char c = source->items[i];
+    if (c == '\n') {
+      append_buffer_to_lines();
+    } else {
+      nob_da_append(&buffer, c);
+    }
+  }
+
+  if (buffer.count > 0) {
+    append_buffer_to_lines();
+  }
+
+  lines_debug(&lines);
+
+#undef append_buffer_to_lines
+  return lines;
+}
+
+static void find_blocks(SourceCode *sc, const char *beg, const char *end,
+                        Blocks *blocks) {
+  Line *line = sc->lines.head;
+  while (line) {
+    // nob_log(INFO, "ANAL line [%s]", line->text);
+    const char *s = strstr(line->text, beg);
+    if (s) {
+      const char *e = strstr(s + strlen(beg), end);
+      if (!e) {
+        nob_log(ERROR, "unmatched block marker %s ... %s", beg, end);
+        exit(1);
+      }
+
+      Block b = (Block){.start = (size_t)(s - sc->source.items),
+                        .end = (size_t)(e + strlen(end) - sc->source.items - 1),
+                        .line = line};
+
+      da_append(blocks, b);
+    }
+    line = line->next;
   }
 }
 
@@ -105,11 +198,28 @@ static char *remove_blocks(const char *text, const char *beg, const char *end) {
   return replace_blocks(text, beg, end, &none);
 }
 
-void parse_stringified_ccode(const char *line, Nob_String_Builder *out) {
+int parse_cct_statement(const char *line, Nob_String_Builder *out) {
+  nob_log(INFO, "parsing line %s", line);
   int ii = 0;
+  // parses "__CCT_STMT_$n = ""
+  while (line[ii] != '$') {
+    ii++;
+  }
+
+  const char *dollar = &line[ii];
+  const int start = ++ii; // skip dollar
+
   while (line[ii] != '=') {
     ii++;
   }
+  const int end = ii; // points to '='
+
+  char n_str[32]; // Adjust size as needed
+  strncpy(n_str, &line[start], end - start);
+  n_str[end - start] = '\0';
+  int n = atoi(n_str);
+
+  nob_log(INFO, "parsed n = %d", n);
 
   ii += 1; // skip eq
   while (line[ii] == ' ' || line[ii] == '\t')
@@ -130,11 +240,12 @@ void parse_stringified_ccode(const char *line, Nob_String_Builder *out) {
       nob_da_append(out, c);
     }
   }
+
+  return n;
 }
 
-static char *gen_runner_c(String_Builder *source, Blocks *ctx, Blocks *runi,
-                          Blocks *runs, Blocks *dos, Blocks *defines,
-                          const char *vals_path) {
+static char *gen_runner_c(SourceCode *sc, Blocks *dos, const char *vals_path) {
+
   Nob_String_Builder sb = {0};
 
   // nob_sb_appendf(
@@ -142,69 +253,14 @@ static char *gen_runner_c(String_Builder *source, Blocks *ctx, Blocks *runi,
   //          "// --- Context ---\n");
 
   sb_appendf(&sb, "\n#define COMPTIME\n");
+  sb_appendf(&sb, "\n#define CCTRUNNER\n");
 
   sb_appendf(&sb, "\n// -- SOURCE FILE START -- \n");
-  sb_append_buf(&sb, source->items, source->count - 1);
+  sb_append_buf(&sb, sc->source.items, sc->source.count - 1);
   sb_appendf(&sb, "\n// -- SOURCE FILE END -- \n\n");
-  // nob_sb_append_cstr(&sb, source);
 
-  // nob_sb_appendf(
-  //     &sb, "#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n"
-  //          "// --- Context ---\n");
-
-  for (size_t i = 0; i < defines->count; i++) {
-    Block b = defines->items[i];
-    Nob_String_Builder out = {0};
-    parse_stringified_ccode(b.contents, &out);
-    sb_append_null(&out);
-    sb_appendf(&sb, "#define %s\n", out.items);
-
-    nob_log(INFO, "\appending... \n%s\n", out.items);
-
-    // ink the block
-    // b.start - b.end
-    for (size_t i = b.start; i < b.end; i++) {
-      // b
-    }
-  }
-
-  // for (size_t i = 0; i < ctx->count; i++) {
-  //   Block b = ctx->items[i];
-  //   nob_log(INFO, "CTX :: appending... \n%s\n", b.contents);
-  //   nob_sb_append_cstr(&sb, b.contents);
-  //   nob_sb_append_cstr(&sb, "\n");
-  // }
-  // for (size_t i = 0; i < runi->count; i++)
-  //   nob_sb_appendf(
-  //       &sb, "static long long eval_I%zu(void){ return (long long)(%s); }\n",
-  //       i, runi->items[i]);
-  // for (size_t i = 0; i < runs->count; i++)
-  //   nob_sb_appendf(&sb, "static const char* eval_S%zu(void){ return (%s);
-  //   }\n",
-  //                  i, runs->items[i]);
-
-  for (size_t i = 0; i < dos->count; i++) {
-    Block b = dos->items[i];
-    const char *line = b.contents;
-    Nob_String_Builder out = {0};
-
-    parse_stringified_ccode(line, &out);
-
-    if (out.items[out.count] != ';') {
-      nob_da_append(&out, ';');
-    }
-
-    nob_sb_append_null(&out);
-    nob_sb_appendf(&sb, "static void do_%zu(void){ %s }\n", i, out.items);
-  }
-
-  // ---- on_exit via macro-selected function pointer ----
-  // user may define in CCT_CTX:
-  //   #define on_exit my_fn
-  //   // or
-  //   #define on_exit exit_ptr
-  // If not defined, default is NULL (no-op).
-  nob_sb_append_cstr(
+  sb_append_cstr(&sb, "\nFILE* __cct_file;\n");
+  sb_append_cstr(
       &sb, "static void cct_write_escaped(FILE* f, const char* s){\n"
            "  if(!s) return;\n"
            "  for (const unsigned char* p=(const unsigned char*)s; *p; ++p){\n"
@@ -217,24 +273,82 @@ static char *gen_runner_c(String_Builder *source, Blocks *ctx, Blocks *runi,
            "  }\n"
            "}\n"
            "\n"
-           "int main(void){\n"
-           "  FILE* f = fopen(\"");
+           "\n"
+           "static void write_labeled_output(const char* label, char* v){\n"
+           "  fputs(label, __cct_file); fputc(':', __cct_file); "
+           "cct_write_escaped(__cct_file, v); "
+           "fputc('\\n', __cct_file);\n"
+           "}\n");
+  // nob_sb_append_cstr(&sb, source);
+
+  // nob_sb_appendf(
+  //     &sb, "#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n"
+  //          "// --- Context ---\n");
+
+  String_Builder main_body = {0};
+
+  for (size_t i = 0; i < dos->count; i++) {
+    Block b = dos->items[i];
+    printf("\n>block starts at %zu ends at %zu\n", b.start, b.end);
+    Nob_String_Builder out = {0};
+
+    parse_cct_statement(b.line->text, &out);
+    // b.line->index;
+    // const int n = parse_cct_statement(b.line->text, &out);
+    //
+
+    if (out.items[out.count] != ';') {
+      nob_da_append(&out, ';');
+    }
+
+    nob_sb_append_null(&out);
+    nob_sb_appendf(&sb,
+                   "static void do_%zu(void){"
+                   "\n#define $$(str) write_labeled_output(\"%zu\", str);\n"
+                   "%s"
+                   "\n#undef $$\n"
+                   "}\n",
+                   b.line->index, b.line->index, out.items);
+
+    sb_appendf(&main_body, "  do_%zu(); // execute statement %zu \n",
+               b.line->index, b.line->index);
+
+    free(b.line->text);
+    b.line->text = temp_sprintf("// CCT_MARK $%zu", b.line->index);
+    // const char *mark_comment = temp_sprintf("//CCT_MARK$%d", n);
+    // strcpy(source->items + b.start, mark_comment);
+    // for (char *ptr = source->items + b.start + strlen(mark_comment);
+    //      ptr < source->items + b.end; ptr++) {
+    //   *ptr = ' ';
+    // }
+  }
+
+  // ---- on_exit via macro-selected function pointer ----
+  // user may define in CCT_CTX:
+  //   #define on_exit my_fn
+  //   // or
+  //   #define on_exit exit_ptr
+  // If not defined, default is NULL (no-op).
+  nob_sb_append_cstr(&sb, "int main(void){\n"
+                          "  __cct_file = fopen(\"");
 
   nob_sb_append_cstr(&sb, vals_path);
-  nob_sb_append_cstr(&sb,
-                     "\", \"wb\"); if(!f){ perror(\"runner\"); return 1; }\n");
-  for (size_t i = 0; i < dos->count; i++)
-    nob_sb_appendf(&sb, "  do_%zu();\n", i);
-  for (size_t i = 0; i < runi->count; i++)
-    nob_sb_appendf(&sb, "  fprintf(f, \"I%zu=%%lld\\n\", eval_I%zu());\n", i,
-                   i);
-  for (size_t i = 0; i < runs->count; i++)
-    nob_sb_appendf(&sb,
-                   "  fputs(\"S%zu=\", f); cct_write_escaped(f, eval_S%zu()); "
-                   "fputc('\\n', f);\n",
-                   i, i);
+  nob_sb_append_cstr(
+      &sb, "\", \"wb\"); if(!__cct_file){ perror(\"runner\"); return 1; }\n");
 
-  nob_sb_append_cstr(&sb, "  fclose(f);\n"
+  sb_append_buf(&sb, main_body.items, main_body.count);
+
+  // for (size_t i = 0; i < dos->count; i++)
+  //   nob_sb_appendf(&sb, "  do_%zu();\n", i);
+  // for (size_t i = 0; i < runi->count; i++)
+  //   nob_sb_appendf(&sb, "  fprintf(f, \"I%zu=%%lld\\n\", eval_I%zu());\n", i,
+  //                  i);
+  // for (size_t i = 0; i < runs->count; i++)
+  //   nob_sb_appendf(&sb,
+  //                  "  fputs(\"S%zu=\", f); cct_write_escaped(f, eval_S%zu());
+  //                  " "fputc('\\n', f);\n", i, i);
+
+  nob_sb_append_cstr(&sb, "  fclose(__cct_file);\n"
                           "  #ifdef ON_EXIT\n ON_EXIT();\n#endif\n"
                           "  return 0;\n"
                           "}\n");
@@ -322,6 +436,40 @@ static const char *real_cc_path(void) {
   return "clang";
 }
 
+typedef struct {
+  size_t line_index;
+  char *replacement;
+} LineReplacement;
+
+typedef struct {
+  LineReplacement *items;
+  size_t count, capacity;
+} LineReplacements;
+
+void parse_vals_file(const char *path, LineReplacements *repls) {
+  String_Builder vals = {0};
+  nob_read_entire_file(path, &vals);
+
+  String_View sv = nob_sv_from_parts(vals.items, vals.count);
+
+  String_View line;
+  while (1) {
+    line = sv_chop_by_delim(&sv, '\n');
+    String_View index_str = sv_chop_by_delim(&line, ':');
+    int i = atoi(nob_temp_sv_to_cstr(index_str));
+    printf("i is %d\n - value is %s\n", i, nob_temp_sv_to_cstr(line));
+
+    LineReplacement repl = (LineReplacement){
+        .line_index = (size_t)i,
+        .replacement = nob_temp_strdup(nob_temp_sv_to_cstr(line)),
+    };
+
+    da_append(repls, repl);
+    if (line.count == 0)
+      break;
+  }
+}
+
 // Build one TU: returns path to rewritten .c (owned by temp arena)
 static const char *process_tu(const char *src, int argc, char **argv,
                               Driver drv, size_t tu_index) {
@@ -359,7 +507,6 @@ static const char *process_tu(const char *src, int argc, char **argv,
     Nob_Cmd cmd = {0};
     nob_cmd_append(
         &cmd, drv.real_cc ? drv.real_cc : real_cc_path(), "-E", "-P", "-CC",
-        "-DCOMPTIME",
         /* rename a potenial "main" func to avoid entry point conflicts */
         "-Dmain=__user_main");
     // forward relevant flags (+ their args)
@@ -392,17 +539,19 @@ static const char *process_tu(const char *src, int argc, char **argv,
   nob_sb_append_null(&pp_text);
 
   // 3) extract blocks
+  //
+  SourceCode pp_source = {0};
+  pp_source.source = pp_text;
+  pp_source.lines = lines_from_source(&pp_text);
+  printf("source code has %zu lines\n", pp_source.lines.count);
+
   // VecStr ctx = {0}, runi = {0}, runs = {0}, dos = {0}, defines = {0};
   Blocks ctx = {0}, defines = {0}, dos = {0};
-  find_blocks(pp_text.items, MARK_CTX_BEG, MARK_CTX_END, &ctx);
-  // find_blocks(pp_text.items, MARK_RUNI_BEG, MARK_RUNI_END, &runi);
-  // find_blocks(pp_text.items, MARK_RUNS_BEG, MARK_RUNS_END, &runs);
-  find_blocks(pp_text.items, MARK_DO_BEG, MARK_DO_END, &dos);
-  find_blocks(pp_text.items, MARK_DEFINE_BEG, MARK_DEFINE_END, &defines);
+  find_blocks(&pp_source, MARK_CTX_BEG, MARK_CTX_END, &ctx);
+  find_blocks(&pp_source, MARK_DO_BEG, MARK_DO_END, &dos);
 
   // 4) generate runner.c
-  char *runner_src =
-      gen_runner_c(&pp_text, &ctx, NULL, NULL, &dos, &defines, vals_path.items);
+  char *runner_src = gen_runner_c(&pp_source, &dos, vals_path.items);
 
   if (!nob_write_entire_file(runner_c.items, runner_src, strlen(runner_src)))
     return NULL;
@@ -427,6 +576,10 @@ static const char *process_tu(const char *src, int argc, char **argv,
       }
     }
 
+    // nob_cmd_append(&cmd, "-include", "stdio.h");
+    // nob_cmd_append(&cmd, "-include", "string.h");
+    // nob_cmd_append(&cmd, "-include", "stdlib.h");
+
     nob_cc_output(&cmd, runner_exe.items);
     nob_cc_inputs(&cmd, runner_c.items);
     if (!nob_cmd_run(&cmd))
@@ -444,38 +597,38 @@ static const char *process_tu(const char *src, int argc, char **argv,
   }
 
   // 7) parse vals, rewrite TU
-  //   Values vals = {0};
-  //   if (!parse_vals(vals_path.items, &vals))
-  //     return NULL;
+  {
+    LineReplacements final_repls = {0};
+    parse_vals_file(vals_path.items, &final_repls);
+    nob_log(INFO, "performing %d replacements", final_repls.count);
 
-  //   char *t1 = remove_blocks(pp_text.items, MARK_CTX_BEG, MARK_CTX_END);
-  //   char *t2 = remove_blocks(t1, MARK_DO_BEG, MARK_DO_END);
+    for (size_t i = final_repls.count; i--; i > 0) {
+      LineReplacement *repl = &final_repls.items[i];
+      Line *line = lines_find_line_index(&pp_source.lines, repl->line_index);
 
-  //   VecStr R_I = {0}, R_S = {0};
-  //   for (size_t i = 0; i < vals.I.count; i++) {
-  //     const char *v = vals.I.items[i] ? vals.I.items[i] : "0";
-  //     vpush(&R_I, nob_temp_strdup(v));
-  //   }
-  //   for (size_t i = 0; i < vals.S.count; i++) {
-  //     const char *v = vals.S.items[i] ? vals.S.items[i] : "";
-  //     Nob_String_Builder sb = {0};
-  //     nob_sb_append_cstr(&sb, "\"");
-  //     nob_sb_append_cstr(&sb, v);
-  //     nob_sb_append_cstr(&sb, "\"");
-  //     nob_sb_append_null(&sb);
-  //     vpush(&R_S, sb.items);
-  //   }
-  //   char *t3 = replace_blocks(t2, MARK_RUNI_BEG, MARK_RUNI_END, &R_I);
-  //   char *t4 = replace_blocks(t3, MARK_RUNS_BEG, MARK_RUNS_END, &R_S);
+      if (!line) {
+        nob_log(ERROR, "could not find line %zu for replacement",
+                repl->line_index);
+      }
+      // inject the replacement
+      Line *line_repl = malloc(sizeof(Line));
+      line_repl->text = repl->replacement;
 
-  if (!nob_write_entire_file(final_c.items, pp_text.items, pp_text.count))
+      line_repl->next = line->next;
+      line->next = line_repl;
+    }
+  }
+
+  String_Builder final_c_source = {0};
+  lines_to_sb(&pp_source.lines, &final_c_source);
+
+  if (!nob_write_entire_file(final_c.items, final_c_source.items,
+                             final_c_source.count))
     return NULL;
   return nob_temp_strdup(final_c.items);
 }
 
 int main(int argc, char **argv) {
-  NOB_GO_REBUILD_URSELF(argc, argv);
-
   if (argc < 2) {
     nob_log(NOB_ERROR,
             "usage: %s "

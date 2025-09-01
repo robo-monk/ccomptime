@@ -2,9 +2,13 @@
 #ifndef CCOMPTIME_H
 #define CCOMPTIME_H
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
 #define _CONCAT_(x, y) x##y
 #define CONCAT(x, y) _CONCAT_(x, y)
-#define VAR_LINE(x) const char *CONCAT(__CCT_DO, __LINE__) = x
+#define VAR_LINE(x) const char *CONCAT(CCT_STMT_$, __LINE__) = x
 
 // Context compiled into the helper runner only (stripped from final TU)
 #define CCT_CTX(code) /*CCT_CTX_BEGIN*/ code /*CCT_CTX_END*/
@@ -30,4 +34,5 @@
 #define $comptime CCT_DO
 #define $comptime_int CCT_RUNI
 #define $comptime_str CCT_RUNS
+
 #endif /* CCOMPTIME_H */
