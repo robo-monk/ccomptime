@@ -3,40 +3,40 @@
 #include "../nob.h"
 #include "stdio.h"
 
-// $comptime_ctx(
-//     void helper() { printf("helper called\n"); }
+typedef struct {
+  char *name;
+} Op;
 
-//     void on_exit() { printf("we niggas are exiting and shit"); });
+typedef struct {
+  Op *items;
+  size_t count;
+  size_t capacity;
+} Ops;
 
-// int result = 0;
+static Ops ops = {0};
 
-int fibonacci(int n) {
-  if (n < 2)
-    return n;
-  return fibonacci(n - 1) + fibonacci(n - 2);
+void on_exit() {
+  // write gencode file
+  // open op file
+  Nob_String_Builder gencode = {0};
+  nob_da_foreach(Op, op, &ops) {
+    nob_sb_appendf(&gencode, "function %s(){}\n", op->name);
+  }
+
+  nob_write_entire_file("gencode.js", gencode.items, gencode.count);
 }
 
-$comptime({
-  int i = 0;
-  while (i++ < 10) {
-    const int r = fibonacci(i);
-    printf("fibfib(%d) = %d\n", i, result);
-    result += r;
-  }
+void define_op(char *op) { nob_da_append(&ops, (Op){.name = strdup(op)}); };
 
-  printf("\n\n --- FINAL RESULT IS ... %d  ----\n", result);
-});
-
-$comptime({
-  printf("> COMPTIME VEC ;: \n");
-  for (int i = 0; i < 10; i++) {
-    $$(nob_temp_sprintf("void vector_%d(){}", i));
-  }
-});
+#define $DEFINE_OP(op) $comptime(define_op(op));
 
 int result = 0;
+
+$DEFINE_OP("yessir");
 int main() {
-  CCT_DO({ printf("hello from: comptime from main(%d) \n\n", result); });
+  $comptime(printf("hello from: comptime from main(%d) \n\n", result););
   printf("hello from runtime space");
   return 42;
 }
+
+$comptime(on_exit());
