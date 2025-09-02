@@ -15,7 +15,7 @@ int main(int argc, char **argv) {
 #if defined(_WIN32) && !defined(__clang__)
   nob_cmd_append(&cmd, "/O2");
 #else
-  nob_cmd_append(&cmd, "-O2");
+  nob_cmd_append(&cmd, "-O3");
 #endif
   nob_cc_inputs(&cmd, "ccomptime-clang.c");
   if (!nob_cmd_run(&cmd))

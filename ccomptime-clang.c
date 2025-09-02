@@ -1,12 +1,9 @@
-// ccomptime-clang.c — drop-in clang driver with compile-time execution pass
-// bootstrap: cc -O2 -o ccomptime-clang ccomptime-clang.c
-// OR: use nob.c below.
-//
-// Runtime dependency: none (self-contained). Uses nob.h internally.
-
 #define NOB_STRIP_PREFIX
 #define NOB_IMPLEMENTATION
 #include "nob.h"
+#include <ctype.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 #define CCT_MAIN "cct_main"
 
@@ -14,19 +11,8 @@ static const char *TMP_DIR = "build/cctmp";
 
 static const char *MARK_CTX_BEG = "/*CCT_CTX_BEGIN*/";
 static const char *MARK_CTX_END = "/*CCT_CTX_END*/";
-static const char *MARK_RUNI_BEG = "/*CCT_RUNI_BEGIN";
-static const char *MARK_RUNI_END = "/*CCT_RUNI_END*/";
-static const char *MARK_RUNS_BEG = "/*CCT_RUNS_BEGIN*/";
-static const char *MARK_RUNS_END = "/*CCT_RUNS_END*/";
-static const char *MARK_DEFINE_BEG = "/*CCT_DEFINE_BEGIN*/";
-static const char *MARK_DEFINE_END = "/*CCT_DEFINE_END*/";
 static const char *MARK_DO_BEG = "/*CCT_DO_BEGIN*/";
 static const char *MARK_DO_END = "/*CCT_DO_END*/";
-
-#include <ctype.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
 typedef struct Line Line;
 
@@ -46,15 +32,6 @@ typedef struct {
   Block *items;
 } Blocks;
 
-static char *dup_range(const char *a, const char *b) {
-  size_t n = (size_t)(b - a);
-  char *s = NOB_REALLOC(NULL, n + 1);
-  NOB_ASSERT(s);
-  memcpy(s, a, n);
-  s[n] = 0;
-  return s;
-}
-
 struct Line {
   Line *next;
   Line *prev;
@@ -73,14 +50,6 @@ typedef struct {
   Lines lines;
   String_Builder source;
 } SourceCode;
-
-void lines_debug(Lines *lines) {
-  nob_log(INFO, "-- DEBUG LINES (length: %zu) --", lines->count);
-  for (Line *line = lines->head; line != NULL; line = line->next) {
-    printf("%s\n", line->text);
-  }
-  printf("----\n");
-}
 
 Line *lines_find_line_index(Lines *line, size_t index) {
   for (Line *l = line->head; l != NULL; l = l->next) {
@@ -125,7 +94,7 @@ Lines lines_from_source(String_Builder *source) {
     buffer.count = 0;                                                          \
   } while (0)
 
-  for (int i = 0; i < source->count; i++) {
+  for (size_t i = 0; i < source->count; i++) {
     const char c = source->items[i];
     if (c == '\n') {
       append_buffer_to_lines();
@@ -137,8 +106,6 @@ Lines lines_from_source(String_Builder *source) {
   if (buffer.count > 0) {
     append_buffer_to_lines();
   }
-
-  lines_debug(&lines);
 
 #undef append_buffer_to_lines
   return lines;
@@ -167,37 +134,6 @@ static void find_blocks(SourceCode *sc, const char *beg, const char *end,
   }
 }
 
-static char *replace_blocks(const char *text, const char *beg, const char *end,
-                            VecStr *repls) {
-  Nob_String_Builder sb = {0};
-  const char *p = text;
-  size_t idx = 0;
-  while (1) {
-    const char *s = strstr(p, beg);
-    if (!s) {
-      nob_sb_append_cstr(&sb, p);
-      break;
-    }
-    const char *e = strstr(s + strlen(beg), end);
-    if (!e) {
-      nob_sb_append_cstr(&sb, p);
-      break;
-    }
-    nob_sb_append_buf(&sb, p, (size_t)(s - p));
-    const char *r = (idx < repls->count) ? repls->items[idx] : "";
-    nob_sb_append_cstr(&sb, r);
-    idx++;
-    p = e + strlen(end);
-  }
-  nob_sb_append_null(&sb);
-  return sb.items;
-}
-
-static char *remove_blocks(const char *text, const char *beg, const char *end) {
-  VecStr none = {0};
-  return replace_blocks(text, beg, end, &none);
-}
-
 int parse_cct_statement(const char *line, Nob_String_Builder *out) {
   nob_log(INFO, "parsing line %s", line);
   int ii = 0;
@@ -206,7 +142,6 @@ int parse_cct_statement(const char *line, Nob_String_Builder *out) {
     ii++;
   }
 
-  const char *dollar = &line[ii];
   const int start = ++ii; // skip dollar
 
   while (line[ii] != '=') {
@@ -360,40 +295,7 @@ typedef struct {
   VecStr I, S;
 } Values;
 
-static bool parse_vals(const char *path, Values *vals) {
-  Nob_String_Builder sb = {0};
-  if (!nob_read_entire_file(path, &sb))
-    return false;
-  nob_sb_append_null(&sb);
-  char *p = sb.items, *end = sb.items + sb.count;
-  while (p < end) {
-    char *nl = memchr(p, '\n', (size_t)(end - p));
-    char *le = nl ? nl : end;
-    if (le > p && (p[0] == 'I' || p[0] == 'S')) {
-      int isS = (p[0] == 'S');
-      char *eq = memchr(p, '=', (size_t)(le - p));
-      if (eq) {
-        size_t idx = (size_t)strtoul(p + 1, NULL, 10);
-        char *val = dup_range(eq + 1, le);
-        if (isS) {
-          while (vals->S.count <= idx)
-            vpush(&vals->S, nob_temp_strdup(""));
-          vals->S.items[idx] = val;
-        } else {
-          while (vals->I.count <= idx)
-            vpush(&vals->I, nob_temp_strdup("0"));
-          vals->I.items[idx] = val;
-        }
-      }
-    }
-    p = nl ? nl + 1 : end;
-  }
-  nob_da_free(sb);
-  return true;
-}
-
 // --- arg handling ------------------------------------------------------------
-
 static int is_flag(const char *s) { return s && s[0] == '-'; }
 static int looks_like_source(const char *s) {
   if (!s || s[0] == '-')
@@ -428,7 +330,6 @@ static int is_pp_relevant_flag(const char *arg) {
 
 typedef struct {
   const char *real_cc; // underlying clang (env CC_REAL or "clang")
-  int have_E;          // global -E present
 } Driver;
 
 static const char *real_cc_path(void) {
@@ -545,8 +446,7 @@ static const char *process_tu(const char *src, int argc, char **argv,
   pp_source.lines = lines_from_source(&pp_text);
   printf("source code has %zu lines\n", pp_source.lines.count);
 
-  // VecStr ctx = {0}, runi = {0}, runs = {0}, dos = {0}, defines = {0};
-  Blocks ctx = {0}, defines = {0}, dos = {0};
+  Blocks ctx = {0}, dos = {0};
   find_blocks(&pp_source, MARK_CTX_BEG, MARK_CTX_END, &ctx);
   find_blocks(&pp_source, MARK_DO_BEG, MARK_DO_END, &dos);
 
@@ -600,9 +500,9 @@ static const char *process_tu(const char *src, int argc, char **argv,
   {
     LineReplacements final_repls = {0};
     parse_vals_file(vals_path.items, &final_repls);
-    nob_log(INFO, "performing %d replacements", final_repls.count);
+    nob_log(INFO, "performing %zu replacements", final_repls.count);
 
-    for (size_t i = final_repls.count; i--; i > 0) {
+    for (size_t i = final_repls.count; i > 0; i--) {
       LineReplacement *repl = &final_repls.items[i];
       Line *line = lines_find_line_index(&pp_source.lines, repl->line_index);
 
@@ -629,6 +529,7 @@ static const char *process_tu(const char *src, int argc, char **argv,
 }
 
 int main(int argc, char **argv) {
+  // nob_minimal_log_level = NOB_ERROR;
   if (argc < 2) {
     nob_log(NOB_ERROR,
             "usage: %s "
@@ -639,10 +540,8 @@ int main(int argc, char **argv) {
   }
 
   Driver drv = {0};
-  drv.real_cc = real_cc_path();
+  drv.real_cc = "clang";
 
-  // collect inputs; also
-  // detect global -E
   VecStr sources = {0};
   int dashdash = 0;
   for (int i = 1; i < argc; i++) {
@@ -650,8 +549,6 @@ int main(int argc, char **argv) {
       dashdash = 1;
       continue;
     }
-    if (strcmp(argv[i], "-E") == 0)
-      drv.have_E = 1;
     if (!dashdash && looks_like_source(argv[i]))
       vpush(&sources, argv[i]);
   }
