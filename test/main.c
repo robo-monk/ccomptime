@@ -32,7 +32,7 @@ void define_op(char *op) { nob_da_append(&ops, (Op){.name = strdup(op)}); };
 
 int result = 0;
 
-$DEFINE_OP("yessir");
+// $DEFINE_OP("yessir");
 int main() {
   $comptime(printf("hello from: comptime from main(%d) \n\n", result););
   printf("hello from runtime space");

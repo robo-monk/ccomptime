@@ -1,3 +1,4 @@
+#include <stdint.h>
 #define NOB_STRIP_PREFIX
 #define NOB_IMPLEMENTATION
 #include "nob.h"
@@ -15,12 +16,6 @@ static const char *MARK_DO_BEG = "/*CCT_DO_BEGIN*/";
 static const char *MARK_DO_END = "/*CCT_DO_END*/";
 
 typedef struct Line Line;
-
-typedef struct {
-  char **items;
-  size_t count, capacity;
-} VecStr;
-static void vpush(VecStr *v, char *s) { nob_da_append(v, s); }
 
 typedef struct {
   size_t start, end;
@@ -50,6 +45,52 @@ typedef struct {
   Lines lines;
   String_Builder source;
 } SourceCode;
+
+typedef struct {
+  int *items;
+  size_t count, capacity;
+} ArgvPointers;
+
+typedef struct {
+  int arc;
+  char **argv;
+  ArgvPointers input_files;
+  ArgvPointers not_input_files;
+} Parsed_Argv;
+
+Parsed_Argv parse_argv(int argc, char **argv) {
+  Parsed_Argv parsed_argv = {
+      .argv = argv,
+      .arc = argc,
+      .input_files = {0},
+      .not_input_files = {0},
+  };
+
+  for (int i = 1; i < argc; i++) {
+    if (argv[i][0] == '-') {
+      da_append(&parsed_argv.not_input_files, i);
+      continue;
+    }
+
+    if (strstr(argv[i], ".c") || strstr(argv[i], ".C")) {
+      nob_log(INFO, "Detected input file: %s", argv[i]);
+      da_append(&parsed_argv.input_files, i);
+    } else {
+      nob_log(INFO, "Detected other flag: %s", argv[i]);
+      da_append(&parsed_argv.not_input_files, i);
+    }
+  }
+
+  return parsed_argv;
+}
+
+void append_argv_pointers_to_cmd(Parsed_Argv *pa, ArgvPointers *pointers,
+                                 Cmd *cmd) {
+  nob_da_foreach(int, index, pointers) {
+    const char *f = pa->argv[*index];
+    nob_cmd_append(cmd, f);
+  }
+}
 
 Line *lines_find_line_index(Lines *line, size_t index) {
   for (Line *l = line->head; l != NULL; l = l->next) {
@@ -292,50 +333,8 @@ static char *gen_runner_c(SourceCode *sc, Blocks *dos, const char *vals_path) {
 }
 
 typedef struct {
-  VecStr I, S;
-} Values;
-
-// --- arg handling ------------------------------------------------------------
-static int is_flag(const char *s) { return s && s[0] == '-'; }
-static int looks_like_source(const char *s) {
-  if (!s || s[0] == '-')
-    return 0;
-  size_t n = strlen(s);
-  return (n > 2 && (nob_sv_end_with(nob_sv_from_cstr(s), ".c") ||
-                    nob_sv_end_with(nob_sv_from_cstr(s), ".C")));
-}
-
-// Whitelist flags to forward to the preprocess/helper compile steps
-static int is_pp_relevant_flag(const char *arg) {
-  if (!arg || arg[0] != '-')
-    return 0;
-  // prefixes
-  const char *pfx[] = {"-I",        "-isystem",    "-include", "-imacros", "-D",
-                       "-U",        "-std",        "-target",  "-f",       "-m",
-                       "-nostdinc", "-nostdinc++", "-x"};
-  for (size_t i = 0; i < NOB_ARRAY_LEN(pfx); ++i) {
-    size_t k = strlen(pfx[i]);
-    if (strncmp(arg, pfx[i], k) == 0)
-      return 1;
-  }
-  // two-arg forms handled by scanning the next token too; we return true here
-  // for the flag, caller is responsible for also pushing the following value.
-  const char *eq[] = {"-isystem", "-include", "-imacros", "-x"};
-  for (size_t i = 0; i < NOB_ARRAY_LEN(eq); ++i) {
-    if (strcmp(arg, eq[i]) == 0)
-      return 1;
-  }
-  return 0;
-}
-
-typedef struct {
   const char *real_cc; // underlying clang (env CC_REAL or "clang")
 } Driver;
-
-static const char *real_cc_path(void) {
-  // const char *cc = nob_getenv("CC_REAL");
-  return "clang";
-}
 
 typedef struct {
   size_t line_index;
@@ -350,6 +349,11 @@ typedef struct {
 void parse_vals_file(const char *path, LineReplacements *repls) {
   String_Builder vals = {0};
   nob_read_entire_file(path, &vals);
+
+  if (vals.count == 0) {
+    nob_log(WARNING, "vals file %s is empty", path);
+    return;
+  }
 
   String_View sv = nob_sv_from_parts(vals.items, vals.count);
 
@@ -372,8 +376,8 @@ void parse_vals_file(const char *path, LineReplacements *repls) {
 }
 
 // Build one TU: returns path to rewritten .c (owned by temp arena)
-static const char *process_tu(const char *src, int argc, char **argv,
-                              Driver drv, size_t tu_index) {
+static const char *process_tu(const char *src, Parsed_Argv *pa, Driver drv,
+                              size_t tu_index) {
   // paths
   if (!mkdir_if_not_exists("build")) { /*noop*/
   }
@@ -407,26 +411,14 @@ static const char *process_tu(const char *src, int argc, char **argv,
   {
     Nob_Cmd cmd = {0};
     nob_cmd_append(
-        &cmd, drv.real_cc ? drv.real_cc : real_cc_path(), "-E", "-P", "-CC",
+        &cmd, "clang", "-E", "-P", "-CC",
         /* rename a potenial "main" func to avoid entry point conflicts */
         "-Dmain=__user_main");
-    // forward relevant flags (+ their args)
-    for (int i = 1; i < argc; i++) {
-      const char *a = argv[i];
-      if (strcmp(a, "-o") == 0) {
-        i++;
-        continue;
-      }
-      if (is_pp_relevant_flag(a)) {
-        nob_cmd_append(&cmd, a);
-        // two-arg flags: add the next token if present and not another flag
-        if ((strcmp(a, "-isystem") == 0 || strcmp(a, "-include") == 0 ||
-             strcmp(a, "-imacros") == 0 || strcmp(a, "-x") == 0) &&
-            i + 1 < argc && !is_flag(argv[i + 1])) {
-          nob_cmd_append(&cmd, argv[++i]);
-        }
-      }
-    }
+
+    append_argv_pointers_to_cmd(pa, &pa->not_input_files, &cmd);
+    // yes we are appending -o again to overwrite any user -o
+    // is this sustainable idk
+    // it saves us from having to parse -o <file> out of argv
     nob_cmd_append(&cmd, "-o", pp_path.items, src);
     if (!nob_cmd_run(&cmd))
       return NULL;
@@ -440,7 +432,6 @@ static const char *process_tu(const char *src, int argc, char **argv,
   nob_sb_append_null(&pp_text);
 
   // 3) extract blocks
-  //
   SourceCode pp_source = {0};
   pp_source.source = pp_text;
   pp_source.lines = lines_from_source(&pp_text);
@@ -463,18 +454,9 @@ static const char *process_tu(const char *src, int argc, char **argv,
   {
     Nob_Cmd cmd = {0};
     nob_cmd_append(&cmd, "clang");
+
     // forward relevant flags
-    for (int i = 1; i < argc; i++) {
-      const char *a = argv[i];
-      if (is_pp_relevant_flag(a)) {
-        nob_cmd_append(&cmd, a);
-        if ((strcmp(a, "-isystem") == 0 || strcmp(a, "-include") == 0 ||
-             strcmp(a, "-imacros") == 0 || strcmp(a, "-x") == 0) &&
-            i + 1 < argc && !is_flag(argv[i + 1])) {
-          nob_cmd_append(&cmd, argv[++i]);
-        }
-      }
-    }
+    append_argv_pointers_to_cmd(pa, &pa->not_input_files, &cmd);
 
     // nob_cmd_append(&cmd, "-include", "stdio.h");
     // nob_cmd_append(&cmd, "-include", "string.h");
@@ -528,7 +510,64 @@ static const char *process_tu(const char *src, int argc, char **argv,
   return nob_temp_strdup(final_c.items);
 }
 
+typedef struct {
+  char *filename;
+  int argv_index;
+} SourceFile;
+
+typedef struct {
+  char **items;
+  size_t count, capacity;
+} Flags;
+
+typedef struct {
+  int argc;
+  char **argv;
+  // Flags flags;
+  // char **items;
+  SourceFile *items;
+  size_t count, capacity;
+} Sources;
+
+void detect_input_files(int argc, char **argv, Sources *sources) {
+  for (int i = 0; i < argc; i++) {
+    if (argv[i][0] == '-') {
+      continue;
+    }
+
+    if (strstr(argv[i], ".c") || strstr(argv[i], ".C")) {
+      nob_log(INFO, "Detected input file: %s\n", argv[i]);
+      SourceFile sf = {
+          .filename = argv[i],
+          .argv_index = (int)i,
+      };
+
+      da_append(sources, sf);
+    }
+  }
+}
+
+char **clone_argv(int argc, char **argv) {
+  char **copy = malloc((argc + 1) * sizeof(char *));
+  if (!copy)
+    return NULL;
+
+  for (int i = 0; i < argc; i++) {
+    copy[i] = strdup(argv[i]); // makes a copy of the string
+    if (!copy[i]) {
+      // cleanup if strdup fails
+      for (int j = 0; j < i; j++)
+        free(copy[j]);
+      free(copy);
+      return NULL;
+    }
+  }
+  copy[argc] = NULL; // NULL-terminate
+  return copy;
+}
+
 int main(int argc, char **argv) {
+  nob_log(NOB_INFO, "Received %d arguments", argc);
   // nob_minimal_log_level = NOB_ERROR;
   if (argc < 2) {
     nob_log(NOB_ERROR,
@@ -542,41 +581,24 @@ int main(int argc, char **argv) {
   Driver drv = {0};
   drv.real_cc = "clang";
 
-  VecStr sources = {0};
-  int dashdash = 0;
-  for (int i = 1; i < argc; i++) {
-    if (!dashdash && strcmp(argv[i], "--") == 0) {
-      dashdash = 1;
-      continue;
-    }
-    if (!dashdash && looks_like_source(argv[i]))
-      vpush(&sources, argv[i]);
+  Parsed_Argv parsed_argv = parse_argv(argc, argv);
+  char **new_argv = clone_argv(argc, argv);
+
+  nob_da_foreach(int, index, &parsed_argv.input_files) {
+    const char *f = argv[*index];
+    const char *rew = process_tu(f, &parsed_argv, drv, *index);
+
+    argv[*index] = (char *)rew;
+    nob_log(INFO, "Rewrote argv[%d] %s -> %s", *index, f, rew);
   }
 
-  // map old source ->
-  // rewritten path
-  typedef struct {
-    const char *oldp;
-    const char *newp;
-  } Map;
-  Map *maps = NULL;
-  size_t maps_n = 0, maps_cap = 0;
-#define MPUSH(o, n)                                                            \
-  do {                                                                         \
-    if (maps_n == maps_cap) {                                                  \
-      maps_cap = maps_cap ? maps_cap * 2 : 8;                                  \
-      maps = NOB_REALLOC(maps, maps_cap * sizeof(Map));                        \
-    }                                                                          \
-    maps[maps_n++] = (Map){(o), (n)};                                          \
-  } while (0)
-
-  // pre-process each TU
-  for (size_t i = 0; i < sources.count; i++) {
-    const char *rew = process_tu(sources.items[i], argc, argv, drv, i);
-    if (!rew)
-      return 1;
-    MPUSH(sources.items[i], rew);
-  }
+  // // pre-process each TU
+  // for (size_t i = 0; i < sources.count; i++) {
+  //   const char *rew = process_tu(sources.items[i], argc, argv, drv, i);
+  //   if (!rew)
+  //     return 1;
+  //   MPUSH(sources.items[i], rew);
+  // }
 
   // Build final argv by
   // replacing inputs with
@@ -584,32 +606,8 @@ int main(int argc, char **argv) {
   Nob_Cmd final = {0};
   nob_cmd_append(&final, drv.real_cc);
   for (int i = 1; i < argc; i++) {
-    const char *tok = argv[i];
-    if (looks_like_source(tok)) {
-      // replace
-      const char *rep = tok;
-      for (size_t j = 0; j < maps_n; j++) {
-        if (strcmp(maps[j].oldp, tok) == 0) {
-          rep = maps[j].newp;
-          break;
-        }
-      }
-      nob_cmd_append(&final, rep);
-      continue;
-    }
-    // pass-thru everything
-    // else as-is
+    const char *tok = new_argv[i];
     nob_cmd_append(&final, tok);
-    // NOTE: keep two-arg flags
-    // paired; clang expects
-    // the next token. We
-    // forward unchanged.
-    if ((strcmp(tok, "-o") == 0 || strcmp(tok, "-isystem") == 0 ||
-         strcmp(tok, "-include") == 0 || strcmp(tok, "-imacros") == 0 ||
-         strcmp(tok, "-x") == 0) &&
-        i + 1 < argc) {
-      nob_cmd_append(&final, argv[++i]);
-    }
   }
 
   nob_cmd_append(&final, "-D__user_main=main");
