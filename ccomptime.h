@@ -12,27 +12,43 @@
 
 // Context compiled into the helper runner only (stripped from final TU)
 #define CCT_CTX(code) /*CCT_CTX_BEGIN*/ code /*CCT_CTX_END*/
-
-#define CCT_RUNI(expr) (/*CCT_RUNI_BEGIN*/ (expr) /*CCT_RUNI_END*/)
-
-// Build-time string expression: same idea as CCT_RUNI.
-#define CCT_RUNS(expr) (/*CCT_RUNS_BEGIN*/ (expr) /*CCT_RUNS_END*/)
-
 // Works at file scope and inside blocks; requires a trailing semicolon.
 #define CCT_DO(stmt) /*CCT_DO_BEGIN*/ VAR_LINE(#stmt) /*CCT_DO_END*/
 
-#define CCT_DEFINE(macro) /*CCT_DEFINE_BEGIN*/                                 \
-  VAR_LINE(#macro)        /*CCT_DEFINE_END*/
-
-#define CCT_ON_EXIT(block)                                                     \
-  CCT_DEFINE(ON_EXIT _on_exit);                                                \
-  void _on_exit() { block }
-
-#define CCT_PUSH_INLINE_CODE(string)
-
 #define $comptime_ctx CCT_CTX
 #define $comptime CCT_DO
-#define $comptime_int CCT_RUNI
-#define $comptime_str CCT_RUNS
+
+#define CCT__type_of(x)                                                        \
+  _Generic((x), \
+    int: int, \
+    double: double, \
+    char*: const char*, \
+    default: void*)
+
+#define CCT__auto_fmt(x)                                                       \
+  _Generic((x), int : "%d", double : "%ld", const char * : "%s", default : "?")
+
+#define CCT__ASSIGNMENT_TO_VAR(varname, expr)                                  \
+  $comptime({                                                                  \
+    CCT__type_of(expr) _result = /*CCT_CTX_BEGIN*/ expr; /*CCT_CTX_END*/       \
+    $$(nob_temp_sprintf("%s = " CCT__auto_fmt(_result) ";", name, _result));   \
+  });
+
+#define $comptime_var(name, v)                                                 \
+  CCT__type_of(v) name = v;                                                    \
+  CCT__ASSIGNMENT_TO_VAR(v, v);
+
+// int name = 0;
+// $comptime({
+//   int _result = /*CCT_CTX_BEGIN*/ int_expr; /*CCT_CTX_END*/
+//   $$(nob_temp_sprintf("%s = %%;", name, _result));
+// })
+
+#define $COMPTIME_INT(name, int_expr)                                          \
+  int name = 0;                                                                \
+  $comptime({                                                                  \
+    int __result = /*CCT_CTX_BEGIN*/ int_expr; /*CCT_CTX_END*/                 \
+    $$(nob_temp_sprintf("int %s = %d;", #name, __result));                     \
+  })
 
 #endif /* CCOMPTIME_H */

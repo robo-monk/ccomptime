@@ -1,4 +1,6 @@
+#include <assert.h>
 #include <stdint.h>
+#include <string.h>
 #define NOB_STRIP_PREFIX
 #define NOB_IMPLEMENTATION
 #include "nob.h"
@@ -51,9 +53,26 @@ typedef struct {
   size_t count, capacity;
 } ArgvPointers;
 
+typedef enum { Compiler_CLANG, Compiler_GCC, _Compiler_Len } Compiler;
+static char *CCompiler_Map[] = {"clang", "gcc"};
+
+static_assert(NOB_ARRAY_LEN(CCompiler_Map) == _Compiler_Len,
+              "supported_compilers length must match CCompiler enum");
+
+static Compiler parse_compiler_name(const char *name) {
+  for (size_t i = 0; i < _Compiler_Len; i++) {
+    if (strcmp(name, CCompiler_Map[i]) == 0) {
+      return (Compiler)i;
+    }
+  }
+
+  return -1;
+}
+
 typedef struct {
   int arc;
   char **argv;
+  Compiler compiler;
   ArgvPointers input_files;
   ArgvPointers not_input_files;
 } Parsed_Argv;
@@ -66,7 +85,20 @@ Parsed_Argv parse_argv(int argc, char **argv) {
       .not_input_files = {0},
   };
 
-  for (int i = 1; i < argc; i++) {
+  parsed_argv.compiler = parse_compiler_name(argv[1]);
+  if (parsed_argv.compiler == -1) {
+    fprintf(stderr, "[ERROR] First arg must be a supported compiler (one of: ");
+    for (size_t i = 0; i < _Compiler_Len; i++) {
+      fprintf(stderr, "%s", CCompiler_Map[i]);
+      if (i < _Compiler_Len - 1) {
+        fprintf(stderr, ", ");
+      }
+    }
+    fprintf(stderr, ")\n");
+    exit(EXIT_FAILURE);
+  }
+
+  for (int i = 2; i < argc; i++) {
     if (argv[i][0] == '-') {
       da_append(&parsed_argv.not_input_files, i);
       continue;
@@ -84,6 +116,10 @@ Parsed_Argv parse_argv(int argc, char **argv) {
   return parsed_argv;
 }
 
+static char *Parsed_Argv_compiler_name(Parsed_Argv *pa) {
+  return CCompiler_Map[pa->compiler];
+}
+
 void append_argv_pointers_to_cmd(Parsed_Argv *pa, ArgvPointers *pointers,
                                  Cmd *cmd) {
   nob_da_foreach(int, index, pointers) {
@@ -92,6 +128,7 @@ void append_argv_pointers_to_cmd(Parsed_Argv *pa, ArgvPointers *pointers,
   }
 }
 
+// TODO: this is O(n) and likely very slow
 Line *lines_find_line_index(Lines *line, size_t index) {
   for (Line *l = line->head; l != NULL; l = l->next) {
     if (l->index == index) {
@@ -121,7 +158,6 @@ void lines_to_sb(Lines *lines, String_Builder *sb) {
   for (Line *line = lines->head; line != NULL; line = line->next) {
     sb_appendf(sb, "%s\n", line->text);
   }
-  sb_append_null(sb);
 }
 
 Lines lines_from_source(String_Builder *source) {
@@ -178,7 +214,6 @@ static void find_blocks(SourceCode *sc, const char *beg, const char *end,
 int parse_cct_statement(const char *line, Nob_String_Builder *out) {
   nob_log(INFO, "parsing line %s", line);
   int ii = 0;
-  // parses "__CCT_STMT_$n = ""
   while (line[ii] != '$') {
     ii++;
   }
@@ -224,10 +259,6 @@ static char *gen_runner_c(SourceCode *sc, Blocks *dos, const char *vals_path) {
 
   Nob_String_Builder sb = {0};
 
-  // nob_sb_appendf(
-  //     &sb, "#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n"
-  //          "// --- Context ---\n");
-
   sb_appendf(&sb, "\n#define COMPTIME\n");
   sb_appendf(&sb, "\n#define CCTRUNNER\n");
 
@@ -255,11 +286,6 @@ static char *gen_runner_c(SourceCode *sc, Blocks *dos, const char *vals_path) {
            "cct_write_escaped(__cct_file, v); "
            "fputc('\\n', __cct_file);\n"
            "}\n");
-  // nob_sb_append_cstr(&sb, source);
-
-  // nob_sb_appendf(
-  //     &sb, "#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n"
-  //          "// --- Context ---\n");
 
   String_Builder main_body = {0};
 
@@ -269,9 +295,6 @@ static char *gen_runner_c(SourceCode *sc, Blocks *dos, const char *vals_path) {
     Nob_String_Builder out = {0};
 
     parse_cct_statement(b.line->text, &out);
-    // b.line->index;
-    // const int n = parse_cct_statement(b.line->text, &out);
-    //
 
     if (out.items[out.count] != ';') {
       nob_da_append(&out, ';');
@@ -291,20 +314,8 @@ static char *gen_runner_c(SourceCode *sc, Blocks *dos, const char *vals_path) {
 
     free(b.line->text);
     b.line->text = temp_sprintf("// CCT_MARK $%zu", b.line->index);
-    // const char *mark_comment = temp_sprintf("//CCT_MARK$%d", n);
-    // strcpy(source->items + b.start, mark_comment);
-    // for (char *ptr = source->items + b.start + strlen(mark_comment);
-    //      ptr < source->items + b.end; ptr++) {
-    //   *ptr = ' ';
-    // }
   }
 
-  // ---- on_exit via macro-selected function pointer ----
-  // user may define in CCT_CTX:
-  //   #define on_exit my_fn
-  //   // or
-  //   #define on_exit exit_ptr
-  // If not defined, default is NULL (no-op).
   nob_sb_append_cstr(&sb, "int main(void){\n"
                           "  __cct_file = fopen(\"");
 
@@ -314,27 +325,12 @@ static char *gen_runner_c(SourceCode *sc, Blocks *dos, const char *vals_path) {
 
   sb_append_buf(&sb, main_body.items, main_body.count);
 
-  // for (size_t i = 0; i < dos->count; i++)
-  //   nob_sb_appendf(&sb, "  do_%zu();\n", i);
-  // for (size_t i = 0; i < runi->count; i++)
-  //   nob_sb_appendf(&sb, "  fprintf(f, \"I%zu=%%lld\\n\", eval_I%zu());\n", i,
-  //                  i);
-  // for (size_t i = 0; i < runs->count; i++)
-  //   nob_sb_appendf(&sb,
-  //                  "  fputs(\"S%zu=\", f); cct_write_escaped(f, eval_S%zu());
-  //                  " "fputc('\\n', f);\n", i, i);
-
   nob_sb_append_cstr(&sb, "  fclose(__cct_file);\n"
-                          "  #ifdef ON_EXIT\n ON_EXIT();\n#endif\n"
                           "  return 0;\n"
                           "}\n");
   nob_sb_append_null(&sb);
   return sb.items;
 }
-
-typedef struct {
-  const char *real_cc; // underlying clang (env CC_REAL or "clang")
-} Driver;
 
 typedef struct {
   size_t line_index;
@@ -360,9 +356,15 @@ void parse_vals_file(const char *path, LineReplacements *repls) {
   String_View line;
   while (1) {
     line = sv_chop_by_delim(&sv, '\n');
+    if (line.count == 0)
+      break;
+
+    nob_log(INFO, "vals line [%.*s]", (int)line.count, line.data);
+
     String_View index_str = sv_chop_by_delim(&line, ':');
     int i = atoi(nob_temp_sv_to_cstr(index_str));
-    printf("i is %d\n - value is %s\n", i, nob_temp_sv_to_cstr(line));
+    printf("LINE:: i is %zu\n - value is %s\n", (size_t)i,
+           strdup(nob_temp_sv_to_cstr(line)));
 
     LineReplacement repl = (LineReplacement){
         .line_index = (size_t)i,
@@ -370,13 +372,11 @@ void parse_vals_file(const char *path, LineReplacements *repls) {
     };
 
     da_append(repls, repl);
-    if (line.count == 0)
-      break;
   }
 }
 
 // Build one TU: returns path to rewritten .c (owned by temp arena)
-static const char *process_tu(const char *src, Parsed_Argv *pa, Driver drv,
+static const char *process_tu(const char *src, Parsed_Argv *pa,
                               size_t tu_index) {
   // paths
   if (!mkdir_if_not_exists("build")) { /*noop*/
@@ -411,11 +411,12 @@ static const char *process_tu(const char *src, Parsed_Argv *pa, Driver drv,
   {
     Nob_Cmd cmd = {0};
     nob_cmd_append(
-        &cmd, "clang", "-E", "-P", "-CC",
+        &cmd, Parsed_Argv_compiler_name(pa), "-E", "-P", "-CC",
         /* rename a potenial "main" func to avoid entry point conflicts */
         "-Dmain=__user_main");
 
     append_argv_pointers_to_cmd(pa, &pa->not_input_files, &cmd);
+
     // yes we are appending -o again to overwrite any user -o
     // is this sustainable idk
     // it saves us from having to parse -o <file> out of argv
@@ -428,8 +429,6 @@ static const char *process_tu(const char *src, Parsed_Argv *pa, Driver drv,
   String_Builder pp_text = {0};
   if (!read_entire_file(pp_path.items, &pp_text))
     return NULL;
-
-  nob_sb_append_null(&pp_text);
 
   // 3) extract blocks
   SourceCode pp_source = {0};
@@ -453,14 +452,10 @@ static const char *process_tu(const char *src, Parsed_Argv *pa, Driver drv,
   // flags
   {
     Nob_Cmd cmd = {0};
-    nob_cmd_append(&cmd, "clang");
+    nob_cmd_append(&cmd, Parsed_Argv_compiler_name(pa));
 
     // forward relevant flags
     append_argv_pointers_to_cmd(pa, &pa->not_input_files, &cmd);
-
-    // nob_cmd_append(&cmd, "-include", "stdio.h");
-    // nob_cmd_append(&cmd, "-include", "string.h");
-    // nob_cmd_append(&cmd, "-include", "stdlib.h");
 
     nob_cc_output(&cmd, runner_exe.items);
     nob_cc_inputs(&cmd, runner_c.items);
@@ -483,22 +478,32 @@ static const char *process_tu(const char *src, Parsed_Argv *pa, Driver drv,
     LineReplacements final_repls = {0};
     parse_vals_file(vals_path.items, &final_repls);
     nob_log(INFO, "performing %zu replacements", final_repls.count);
+    int i = final_repls.count - 1;
+    while (true) {
+      LineReplacement repl = final_repls.items[i];
+      nob_log(INFO, "(%zu) applying repl at line %zu: %s", i, repl.line_index,
+              repl.replacement);
 
-    for (size_t i = final_repls.count; i > 0; i--) {
-      LineReplacement *repl = &final_repls.items[i];
-      Line *line = lines_find_line_index(&pp_source.lines, repl->line_index);
+      Line *line = lines_find_line_index(&pp_source.lines, repl.line_index);
 
       if (!line) {
         nob_log(ERROR, "could not find line %zu for replacement",
-                repl->line_index);
+                repl.line_index);
+        break;
       }
       // inject the replacement
       Line *line_repl = malloc(sizeof(Line));
-      line_repl->text = repl->replacement;
+      line_repl->text = repl.replacement;
 
       line_repl->next = line->next;
       line->next = line_repl;
-    }
+
+      i -= 1;
+
+      if (i <= 0) {
+        break;
+      }
+    };
   }
 
   String_Builder final_c_source = {0};
@@ -508,43 +513,6 @@ static const char *process_tu(const char *src, Parsed_Argv *pa, Driver drv,
                              final_c_source.count))
     return NULL;
   return nob_temp_strdup(final_c.items);
-}
-
-typedef struct {
-  char *filename;
-  int argv_index;
-} SourceFile;
-
-typedef struct {
-  char **items;
-  size_t count, capacity;
-} Flags;
-
-typedef struct {
-  int argc;
-  char **argv;
-  // Flags flags;
-  // char **items;
-  SourceFile *items;
-  size_t count, capacity;
-} Sources;
-
-void detect_input_files(int argc, char **argv, Sources *sources) {
-  for (int i = 0; i < argc; i++) {
-    if (argv[i][0] == '-') {
-      continue;
-    }
-
-    if (strstr(argv[i], ".c") || strstr(argv[i], ".C")) {
-      nob_log(INFO, "Detected input file: %s\n", argv[i]);
-      SourceFile sf = {
-          .filename = argv[i],
-          .argv_index = (int)i,
-      };
-
-      da_append(sources, sf);
-    }
-  }
 }
 
 char **clone_argv(int argc, char **argv) {
@@ -578,42 +546,33 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  Driver drv = {0};
-  drv.real_cc = "clang";
-
   Parsed_Argv parsed_argv = parse_argv(argc, argv);
   char **new_argv = clone_argv(argc, argv);
 
   nob_da_foreach(int, index, &parsed_argv.input_files) {
     const char *f = argv[*index];
-    const char *rew = process_tu(f, &parsed_argv, drv, *index);
+    const char *rew = process_tu(f, &parsed_argv, *index);
 
-    argv[*index] = (char *)rew;
+    new_argv[*index] = (char *)rew;
     nob_log(INFO, "Rewrote argv[%d] %s -> %s", *index, f, rew);
+    if (!rew) {
+      nob_log(ERROR, "failed to process TU %s", f);
+      exit(1);
+    }
   }
-
-  // // pre-process each TU
-  // for (size_t i = 0; i < sources.count; i++) {
-  //   const char *rew = process_tu(sources.items[i], argc, argv, drv, i);
-  //   if (!rew)
-  //     return 1;
-  //   MPUSH(sources.items[i], rew);
-  // }
 
   // Build final argv by
   // replacing inputs with
   // rewritten paths
   Nob_Cmd final = {0};
-  nob_cmd_append(&final, drv.real_cc);
-  for (int i = 1; i < argc; i++) {
+  nob_cmd_append(&final, Parsed_Argv_compiler_name(&parsed_argv));
+
+  for (int i = 2; i < argc; i++) {
     const char *tok = new_argv[i];
     nob_cmd_append(&final, tok);
   }
 
   nob_cmd_append(&final, "-D__user_main=main");
-
-  // Execute underlying clang
-  // with swapped sources
   if (!nob_cmd_run(&final))
     return 1;
   return 0;

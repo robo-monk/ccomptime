@@ -1,4 +1,5 @@
 #include "../ccomptime.h"
+#include <stdatomic.h>
 #define NOB_IMPLEMENTATION
 #include "../nob.h"
 #include "stdio.h"
@@ -30,12 +31,20 @@ void define_op(char *op) { nob_da_append(&ops, (Op){.name = strdup(op)}); };
 
 #define $DEFINE_OP(op) $comptime(define_op(op));
 
-int result = 0;
+static int compute() {
+  int a = 400;
+  int b = 20;
+  return a + b;
+};
 
-// $DEFINE_OP("yessir");
+$COMPTIME_INT(result, compute());
+
+$DEFINE_OP("yessir");
 int main() {
-  $comptime(printf("hello from: comptime from main(%d) \n\n", result););
-  printf("hello from runtime space");
+
+  // const char *fmt = CCT__auto_fmt(result);
+  // $comptime(printf("hello from: comptime from main(%d) \n\n", result));
+  printf("hello from runtime space %d\n", result);
   return 42;
 }
 
