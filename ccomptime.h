@@ -18,32 +18,6 @@
 #define $comptime_ctx CCT_CTX
 #define $comptime CCT_DO
 
-#define CCT__type_of(x)                                                        \
-  _Generic((x), \
-    int: int, \
-    double: double, \
-    char*: const char*, \
-    default: void*)
-
-#define CCT__auto_fmt(x)                                                       \
-  _Generic((x), int : "%d", double : "%ld", const char * : "%s", default : "?")
-
-#define CCT__ASSIGNMENT_TO_VAR(varname, expr)                                  \
-  $comptime({                                                                  \
-    CCT__type_of(expr) _result = /*CCT_CTX_BEGIN*/ expr; /*CCT_CTX_END*/       \
-    $$(nob_temp_sprintf("%s = " CCT__auto_fmt(_result) ";", name, _result));   \
-  });
-
-#define $comptime_var(name, v)                                                 \
-  CCT__type_of(v) name = v;                                                    \
-  CCT__ASSIGNMENT_TO_VAR(v, v);
-
-// int name = 0;
-// $comptime({
-//   int _result = /*CCT_CTX_BEGIN*/ int_expr; /*CCT_CTX_END*/
-//   $$(nob_temp_sprintf("%s = %%;", name, _result));
-// })
-
 #define $COMPTIME_INT(name, int_expr)                                          \
   int name = 0;                                                                \
   $comptime({                                                                  \

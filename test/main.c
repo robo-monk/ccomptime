@@ -1,3 +1,4 @@
+const static int first = __LINE__;
 #include "../ccomptime.h"
 #include <stdatomic.h>
 #define NOB_IMPLEMENTATION
@@ -31,15 +32,13 @@ void define_op(char *op) { nob_da_append(&ops, (Op){.name = strdup(op)}); };
 
 #define $DEFINE_OP(op) $comptime(define_op(op));
 
-static int compute() {
+int compute() {
   int a = 400;
   int b = 20;
   return a + b;
 };
-
 $COMPTIME_INT(result, compute());
-
-$DEFINE_OP("yessir");
+$DEFINE_OP("hello");
 int main() {
 
   // const char *fmt = CCT__auto_fmt(result);
@@ -49,3 +48,5 @@ int main() {
 }
 
 $comptime(on_exit());
+
+const static int last = __LINE__;
