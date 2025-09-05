@@ -443,15 +443,15 @@ char *leaky_sprintf(const char *fmt, ...) {
 
 static void Context_fill_paths(Context *ctx, const char *original_source) {
   ctx->preprocessed_path =
-      leaky_sprintf("%sct-preprocessed.c", original_source);
+      leaky_sprintf("%sct-preprocessed.i", original_source);
   ctx->runner_cpath = leaky_sprintf("%sct-runner.c", original_source);
 #ifdef _WIN32
   ctx->runner_exepath = leaky_sprintf("%sct-runner.exe", original_source);
 #else
   ctx->runner_exepath = leaky_sprintf("%sct-runner", original_source);
 #endif
-  ctx->vals_path = leaky_sprintf("%sct-vals.txt", original_source);
-  ctx->final_out_path = leaky_sprintf("%sct-final.c", original_source);
+  ctx->vals_path = leaky_sprintf("%sct-vals.cct_vals", original_source);
+  ctx->final_out_path = leaky_sprintf("%sct-final.i", original_source);
 }
 
 void compile_and_run_runner(Context *ctx) {
@@ -713,7 +713,7 @@ static void run_preprocess_cmd_for_source(Parsed_Argv *parsed_argv,
   append_argv_pointers_to_cmd(parsed_argv, &parsed_argv->not_input_files,
                               &pp_cmd);
 
-  nob_cmd_append(&pp_cmd, "-CC", "-E", "-P", "-Dmain=__user_main");
+  nob_cmd_append(&pp_cmd, "-CC", "-E");
   nob_cmd_append(&pp_cmd, "-o", output_filename);
 
   if (!nob_cmd_run(&pp_cmd)) {
@@ -910,86 +910,10 @@ int main(int argc, char **argv) {
     nob_log(INFO, "WRTING FINAL OUTPUT FILE %s (%zu)bytes ", ctx.final_out_path,
             repls2.count);
     write_entire_file(ctx.final_out_path, repls2.items, repls2.count);
-    exit(1);
-    // -- COMPUTE REPLACEMENT INSTRUCTIONS --
-    LineReplacements repls = {0};
-    parse_vals_file(ctx.vals_path, &repls);
 
-    if (repls.count > 0) {
+    // -- APPEND FINAL OUTPUT FILE TO ARGV --
+    nob_cmd_append(&final, ctx.final_out_path);
 
-      // -- RECONSTRUCT FINAL SOURCE FILE --
-      String_Builder reconstructed_source = {0};
-
-      Block2 *last_block = NULL;
-
-      da_foreach(LineReplacement, lr, &repls) {
-
-        size_t block_index = atoi(lr->label);
-        assert(block_index < do_blocks.count);
-        assert(last_block == NULL || (last_block->block_index <= block_index));
-
-        Block2 *b = &do_blocks.items[block_index];
-
-        // append all source from end of last block to start of this block
-        if (last_block != NULL) {
-          nob_log(INFO, "Appending replacement for block %s", b->block_id);
-
-          size_t start = (last_block->end - ctx.raw_source->source.items) + 1;
-          size_t end = (b->beg - ctx.raw_source->source.items);
-          if (end > start) {
-            sb_append_buf(&reconstructed_source,
-                          ctx.raw_source->source.items + start, end - start);
-          }
-        } else {
-          // first block, append from start of file
-          size_t start = 0;
-          size_t end = (b->beg - ctx.raw_source->source.items);
-          if (end > start) {
-            sb_append_buf(&reconstructed_source,
-                          ctx.raw_source->source.items + start, end - start);
-          }
-        }
-
-        last_block = b;
-      }
-
-      // da_foreach(Block2 , b, &do_blocks) {
-      //   // find which line the block starts on
-      //   size_t line_index = 0;
-      //   for (Line *line = ctx.raw_source->lines.head; line != NULL;
-      //        line = line->next) {
-      //     if ((size_t)(b->beg - ctx.raw_source->source.items) >= line->index)
-      //     {
-      //       line_index = line->index;
-      //     } else {
-      //       break;
-      //     }
-      //   }
-
-      //   LineReplacement repl = (LineReplacement){
-      //       .line_index = line_index,
-      //       .replacement = leaky_sprintf("/* COMPTIME BLOCK %s EXECUTED */",
-      //                                    b->block_id),
-      //       .block = b,
-      //   };
-
-      //   da_append(&repls, repl);
-
-      // exec_line_replacements_in_place(&ctx, &repls);
-
-      // -- WRITE FINAL OUTPUT FILE --
-      // String_Builder final_c_source = {0};
-      // lines_to_sb(&ctx.raw_source->lines, &final_c_source);
-      write_entire_file(ctx.final_out_path, reconstructed_source.items,
-                        reconstructed_source.count);
-
-      // -- APPEND FINAL OUTPUT FILE TO ARGV --
-      nob_cmd_append(&final, ctx.final_out_path);
-
-    } else {
-      // no change to original source
-      nob_cmd_append(&final, ctx.input_path);
-    }
     nob_log(INFO, "Appended final output file %s to final argv",
             ctx.final_out_path);
 
