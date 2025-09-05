@@ -3,6 +3,7 @@ const static int first = __LINE__;
 #include <stdatomic.h>
 #define NOB_IMPLEMENTATION
 #include "../nob.h"
+#include "another.c"
 #include "stdio.h"
 
 typedef struct {
@@ -37,16 +38,24 @@ int compute() {
   int b = 20;
   return a + b;
 };
-$COMPTIME_INT(result, compute());
-$DEFINE_OP("hello");
+
+// $COMPTIME_INT(result, compute());
+
+$comptime {
+  printf("\n\nHello from the comptime!\n\n");
+
+  $$("int result = %d;", compute());
+}
+
+// $DEFINE_OP("hello");
 int main() {
 
   // const char *fmt = CCT__auto_fmt(result);
   // $comptime(printf("hello from: comptime from main(%d) \n\n", result));
-  printf("hello from runtime space %d\n", result);
+  // printf("hello from runtime space %d\n", result);
   return 42;
 }
 
-$comptime(on_exit());
+// $comptime(on_exit());
 
 const static int last = __LINE__;
