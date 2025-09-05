@@ -3,7 +3,7 @@ const static int first = __LINE__;
 #include <stdatomic.h>
 #define NOB_IMPLEMENTATION
 #include "../nob.h"
-#include "another.c"
+// #include "another.c"
 #include "stdio.h"
 
 typedef struct {
@@ -41,7 +41,7 @@ int compute() {
 
 // $COMPTIME_INT(result, compute());
 
-$comptime {
+comptime {
   printf("\n\nHello from the comptime!\n\n");
 
   $$("int result = %d;", compute());
