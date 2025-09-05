@@ -25,7 +25,7 @@ typedef int (*CCT_write_in_place_fn)(const char *fmt, ...)
 #define $comptime_inline CCT_CTX
 // #define $comptime CCT_DO
 
-#define $comptime FN_LINE
+#define comptime FN_LINE
 
 #define $COMPTIME_INT(name, int_expr)                                          \
   int name = 0;                                                                \

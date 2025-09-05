@@ -2,31 +2,15 @@
 #include <string.h>
 #define NOB_STRIP_PREFIX
 #define NOB_IMPLEMENTATION
-#include "hashmap.c"
 #include "nob.h"
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 
-#define CCT_MAIN "cct_main"
 #define STRINGIFY(x) #x
-
-static const char *TMP_DIR = "build/cctmp";
-
-static const char *MARK_CTX_BEG = "/*CCT_CTX_BEGIN*/";
-static const char *MARK_CTX_END = "/*CCT_CTX_END*/";
-static const char *MARK_DO_BEG = "/*CCT_DO_BEGIN*/";
-static const char *MARK_DO_END = "/*CCT_DO_END*/";
 
 #define BLOCK_ID_PREFIX "CCT_STMT_$"
 #define BLOCK_FUNC_PREFIX "void " BLOCK_ID_PREFIX
-
-typedef struct Line Line;
-
-typedef struct {
-  size_t start, end;
-  Line *line;
-} Block;
 
 typedef struct {
   const char *beg, *end;
@@ -40,27 +24,6 @@ typedef struct {
 } Blocks2;
 
 typedef struct {
-  size_t count, capacity;
-  Block *items;
-} Blocks;
-
-struct Line {
-  Line *next;
-  Line *prev;
-
-  size_t index;
-  char *text;
-};
-
-typedef struct {
-  Line *head;
-  Line *tail;
-  size_t count;
-  HashMap map;
-} Lines;
-
-typedef struct {
-  Lines lines;
   String_Builder source;
 } SourceCode;
 
@@ -273,142 +236,9 @@ void append_argv_pointers_to_cmd(Parsed_Argv *pa, ArgvPointers *pointers,
                                  Cmd *cmd) {
   nob_da_foreach(int, index, pointers) {
     const char *f = pa->argv[*index];
-    nob_log(INFO, "~~ append %s", f);
     nob_cmd_append(cmd, f);
   }
 }
-
-Line *lines_find_line_index(Lines *lines, size_t index) {
-  return (Line *)HashMap_get(&lines->map, index);
-}
-
-void lines_append_new(Lines *lines, size_t index, char *text) {
-  Line *line = malloc(sizeof(Line));
-  line->text = text;
-  line->index = lines->count++;
-  if (!lines->head) {
-    lines->head = line;
-  }
-
-  if (lines->tail) {
-    lines->tail->next = line;
-  }
-
-  line->prev = lines->tail;
-  lines->tail = line;
-
-  HashMap_set(&lines->map, index, line);
-}
-
-void lines_to_sb(Lines *lines, String_Builder *sb) {
-  for (Line *line = lines->head; line != NULL; line = line->next) {
-    sb_appendf(sb, "%s\n", line->text);
-  }
-}
-
-Lines lines_from_source(String_Builder *source) {
-  nob_log(INFO, "lines from source");
-  Lines lines = {0};
-  lines.map = HashMap_init(256);
-
-  String_Builder buffer = {0};
-
-  size_t line_index = 1;
-#define append_buffer_to_lines()                                               \
-  do {                                                                         \
-    sb_append_null(&buffer);                                                   \
-    lines_append_new(&lines, line_index++, strdup(buffer.items));              \
-    buffer.count = 0;                                                          \
-  } while (0)
-
-  for (size_t i = 0; i < source->count; i++) {
-    const char c = source->items[i];
-    if (c == '\n') {
-      append_buffer_to_lines();
-    } else {
-      nob_da_append(&buffer, c);
-    }
-  }
-
-  if (buffer.count > 0) {
-    append_buffer_to_lines();
-  }
-
-#undef append_buffer_to_lines
-  return lines;
-}
-
-static void find_blocks(SourceCode *sc, const char *beg, const char *end,
-                        Blocks *blocks) {
-  Line *line = sc->lines.head;
-  while (line) {
-    // nob_log(INFO, "ANAL line [%s]", line->text);
-    const char *s = strstr(line->text, beg);
-    if (s) {
-      const char *e = strstr(s + strlen(beg), end);
-      if (!e) {
-        nob_log(ERROR, "unmatched block marker %s ... %s", beg, end);
-        exit(1);
-      }
-
-      Block b = (Block){.start = (size_t)(s - sc->source.items),
-                        .end = (size_t)(e + strlen(end) - sc->source.items - 1),
-                        .line = line};
-
-      da_append(blocks, b);
-    }
-    line = line->next;
-  }
-}
-
-int parse_cct_statement(const char *line, Nob_String_Builder *out) {
-  nob_log(INFO, "parsing line %s", line);
-  int ii = 0;
-  while (line[ii] != '$') {
-    ii++;
-  }
-
-  const int start = ++ii; // skip dollar
-
-  while (line[ii] != '=') {
-    ii++;
-  }
-  const int end = ii; // points to '='
-
-  char n_str[32]; // Adjust size as needed
-  strncpy(n_str, &line[start], end - start);
-  n_str[end - start] = '\0';
-  int n = atoi(n_str);
-
-  nob_log(INFO, "parsed n = %d", n);
-
-  ii += 1; // skip eq
-  while (line[ii] == ' ' || line[ii] == '\t')
-    ii++; // skip whitespace
-
-  if (line[ii++] != '\"') {
-
-    nob_log(ERROR, "#expected \\\n");
-    exit(1);
-  }
-
-  while (line[ii] != '\"') {
-    char c = line[ii++];
-    if (c == '\\') {
-      char e = line[ii++];
-      nob_da_append(out, e);
-    } else {
-      nob_da_append(out, c);
-    }
-  }
-
-  return n;
-}
-
-typedef struct {
-  SourceCode *og_sc;
-  SourceCode *pp_sc;
-} Context2;
 
 typedef struct {
   SourceCode *raw_source;
@@ -454,6 +284,7 @@ static void Context_fill_paths(Context *ctx, const char *original_source) {
   ctx->final_out_path = leaky_sprintf("%sct-final.i", original_source);
 }
 
+// TODO: disable warnings emited if not -cct-debug
 void compile_and_run_runner(Context *ctx) {
   assert(ctx->runner_cpath);
   static Nob_Cmd cmd = {0};
@@ -536,28 +367,6 @@ void generate_runner_c(Context *ctx, Blocks2 *dos) {
   write_entire_file(ctx->runner_cpath, sb.items, sb.count);
 }
 
-typedef struct {
-  // size_t line_index;
-  char *label;
-  char *replacement;
-  // Block2 *block;
-} LineReplacement;
-
-typedef struct {
-  LineReplacement *items;
-  size_t count, capacity;
-} LineReplacements;
-
-typedef struct {
-  char *replacement; // can be NULL if no replacement
-  Block2 *block;
-} BlockReplacement;
-
-typedef struct {
-  BlockReplacement *items;
-  size_t count, capacity;
-} BlockReplacements;
-
 bool ValsFile_parse_next_replacement(String_View *contents, String_View *label,
                                      String_View *replacement) {
 
@@ -614,102 +423,11 @@ StringBuilderArray ValsFile_read_file(const char *path) {
   return (StringBuilderArray){.builders = sba, .count = max_index + 1};
 }
 
-void map_blocks_to_replacements(Context *ctx, Blocks2 *blocks,
-                                String_Builder *out) {
-  // String_Builder out = {0};
-
-  String_Builder vals = {0};
-  nob_read_entire_file(ctx->vals_path, &vals);
-  String_View sv = sv_from_parts(vals.items, vals.count);
-
-  // int flushed_until = 0;
-  char *flushed_until_ptr = ctx->preprocessed_source->source.items;
-
-  while (1) {
-    String_View label, replacement = {0};
-    bool has_next = ValsFile_parse_next_replacement(&sv, &label, &replacement);
-    if (!has_next) {
-      break;
-    }
-    nob_log(INFO, "vals line [%.*s] : '%.*s'", (int)label.count, label.data,
-            (int)replacement.count, replacement.data);
-
-    int block_index = atoi(nob_temp_sv_to_cstr(label));
-    assert(block_index < blocks->count);
-
-    Block2 b = blocks->items[block_index];
-    nob_log(INFO, "mapping replacement to block %s", b.block_id);
-    nob_log(INFO, "%p <= %p", flushed_until_ptr, b.beg);
-    assert(flushed_until_ptr <= b.beg);
-
-    // copy everything from flushed_until_ptr to b.beg
-    size_t n = (size_t)(b.beg - flushed_until_ptr);
-    nob_log(INFO, "appending %zu bytes of original source", n);
-    sb_append_buf(out, flushed_until_ptr, n);
-
-    nob_log(INFO, "appending replacement '%.*s'", (int)replacement.count,
-            replacement.data);
-
-    // append replacement
-    if (replacement.count > 0) {
-      sb_append_buf(out, replacement.data, replacement.count);
-    }
-
-    flushed_until_ptr = (char *)b.end + 1;
-  }
-
-  // copy the rest of the file
-  if (flushed_until_ptr < ctx->preprocessed_source->source.items +
-                              ctx->preprocessed_source->source.count) {
-    nob_log(INFO, "We have remaining source to flush (from %p to %p)",
-            flushed_until_ptr,
-            ctx->preprocessed_source->source.items +
-                ctx->preprocessed_source->source.count);
-    size_t n =
-        (size_t)(ctx->preprocessed_source->source.items +
-                 ctx->preprocessed_source->source.count - flushed_until_ptr);
-    sb_append_buf(out, flushed_until_ptr, n - 1);
-  }
-
-  // by default every block gets a NULL replacement
-
-  // if (vals.count == 0) {
-  //   nob_log(WARNING, "vals file %s is empty", path);
-  //   return;
-  // }
-
-  // String_View line;
-  // while (1) {
-  //   line = sv_chop_by_delim(&sv, '\n');
-  //   if (line.count == 0)
-  //     break;
-
-  //   nob_log(INFO, "vals line [%.*s]", (int)line.count, line.data);
-
-  //   String_View index_str = sv_chop_by_delim(&line, ':');
-  //   // int i = atoi(nob_temp_sv_to_cstr(index_str));
-
-  //   LineReplacement repl = (LineReplacement){
-  //       .label = strdup(nob_temp_sv_to_cstr(index_str)),
-  //       .replacement = strdup(nob_temp_sv_to_cstr(line)),
-  //   };
-
-  //   da_append(repls, repl);
-  // }
-}
-
 void map_blocks_to_replacements2(Context *ctx, Blocks2 *blocks,
                                  String_Builder *out) {
-  // TODO::: for blocks find replacement in sba and do the flushing trick
-  //
-  // String_Builder out = {0};
 
-  // String_Builder vals = {0};
-  // nob_read_entire_file(ctx->vals_path, &vals);
-  // String_View sv = sv_from_parts(vals.items, vals.count);
   StringBuilderArray sba = ValsFile_read_file(ctx->vals_path);
 
-  // int flushed_until = 0;
   char *flushed_until_ptr = ctx->preprocessed_source->source.items;
 
   // for each block
@@ -731,46 +449,6 @@ void map_blocks_to_replacements2(Context *ctx, Blocks2 *blocks,
     flushed_until_ptr = (char *)b->end + 1;
   }
 
-  // int sba_index = 0;
-  // while (1) {
-  //   if (sba_index >= sba.count) {
-  //     break;
-  //   }
-
-  //   String_Builder replacement = sba.builders[sba_index];
-  //   // String_View label, replacement = {0};
-
-  //   // bool has_next = ValsFile_parse_next_replacement(&sv, &label,
-  //   // &replacement); if (!has_next) {
-  //   //   break;
-  //   // }
-  //   nob_log(INFO, "vals line [%.*s] : '%.*s'", (int)label.count, label.data,
-  //           (int)replacement.count, replacement.data);
-
-  //   int block_index = atoi(nob_temp_sv_to_cstr(label));
-  //   assert(block_index < blocks->count);
-
-  //   Block2 b = blocks->items[block_index];
-  //   nob_log(INFO, "mapping replacement to block %s", b.block_id);
-  //   nob_log(INFO, "%p <= %p", flushed_until_ptr, b.beg);
-  //   assert(flushed_until_ptr <= b.beg);
-
-  //   // copy everything from flushed_until_ptr to b.beg
-  //   size_t n = (size_t)(b.beg - flushed_until_ptr);
-  //   nob_log(INFO, "appending %zu bytes of original source", n);
-  //   sb_append_buf(out, flushed_until_ptr, n);
-
-  //   nob_log(INFO, "appending replacement '%.*s'", (int)replacement.count,
-  //           replacement.data);
-
-  //   // append replacement
-  //   if (replacement.count > 0) {
-  //     sb_append_buf(out, replacement.data, replacement.count);
-  //   }
-
-  //   flushed_until_ptr = (char *)b.end + 1;
-  // }
-
   // copy the rest of the file
   if (flushed_until_ptr < ctx->preprocessed_source->source.items +
                               ctx->preprocessed_source->source.count) {
@@ -783,63 +461,6 @@ void map_blocks_to_replacements2(Context *ctx, Blocks2 *blocks,
                  ctx->preprocessed_source->source.count - flushed_until_ptr);
     sb_append_buf(out, flushed_until_ptr, n - 1);
   }
-
-  // by default every block gets a NULL replacement
-
-  // if (vals.count == 0) {
-  //   nob_log(WARNING, "vals file %s is empty", path);
-  //   return;
-  // }
-
-  // String_View line;
-  // while (1) {
-  //   line = sv_chop_by_delim(&sv, '\n');
-  //   if (line.count == 0)
-  //     break;
-
-  //   nob_log(INFO, "vals line [%.*s]", (int)line.count, line.data);
-
-  //   String_View index_str = sv_chop_by_delim(&line, ':');
-  //   // int i = atoi(nob_temp_sv_to_cstr(index_str));
-
-  //   LineReplacement repl = (LineReplacement){
-  //       .label = strdup(nob_temp_sv_to_cstr(index_str)),
-  //       .replacement = strdup(nob_temp_sv_to_cstr(line)),
-  //   };
-
-  //   da_append(repls, repl);
-  // }
-}
-
-void parse_vals_file(const char *path, LineReplacements *repls) {
-  String_Builder vals = {0};
-  nob_read_entire_file(path, &vals);
-
-  if (vals.count == 0) {
-    nob_log(WARNING, "vals file %s is empty", path);
-    return;
-  }
-
-  String_View sv = nob_sv_from_parts(vals.items, vals.count);
-
-  String_View line;
-  while (1) {
-    line = sv_chop_by_delim(&sv, '\n');
-    if (line.count == 0)
-      break;
-
-    nob_log(INFO, "vals line [%.*s]", (int)line.count, line.data);
-
-    String_View index_str = sv_chop_by_delim(&line, ':');
-    // int i = atoi(nob_temp_sv_to_cstr(index_str));
-
-    LineReplacement repl = (LineReplacement){
-        .label = strdup(nob_temp_sv_to_cstr(index_str)),
-        .replacement = strdup(nob_temp_sv_to_cstr(line)),
-    };
-
-    da_append(repls, repl);
-  }
 }
 
 void parse_source_file(const char *filename, SourceCode *sc) {
@@ -850,8 +471,6 @@ void parse_source_file(const char *filename, SourceCode *sc) {
     nob_log(ERROR, "could not read source file %s", filename);
     exit(1);
   }
-
-  sc->lines = lines_from_source(&sc->source);
 }
 
 static void run_preprocess_cmd_for_source(Parsed_Argv *parsed_argv,
@@ -875,14 +494,10 @@ static void run_preprocess_cmd_for_source(Parsed_Argv *parsed_argv,
   }
 }
 
-typedef char *temp_cstr;
-temp_cstr sb_temp_cstr_view(String_Builder *sb) {
-  sb->items[sb->count] = '\0';
-  return sb->items;
-}
-
 void find_blocks2(SourceCode *sc, Blocks2 *blocks) {
-  temp_cstr source = sb_temp_cstr_view(&sc->source);
+  sc->source.items[sc->source.count] = '\0';
+  const char *source = sc->source.items;
+
   while (true) {
     const char *beg = strstr(source, BLOCK_FUNC_PREFIX);
     if (!beg) {
@@ -890,9 +505,7 @@ void find_blocks2(SourceCode *sc, Blocks2 *blocks) {
     }
     const char *cursor = beg + strlen(BLOCK_FUNC_PREFIX);
     nob_log(INFO, "found beg at %p %c", beg, *beg);
-
-    // beg += strlen(BLOCK_FUNC_PREFIX);
-
+    // skip whitespace
     const char *stmt_name_beg = cursor;
     while (*cursor && *cursor != '(') {
       cursor++;
@@ -922,33 +535,8 @@ void find_blocks2(SourceCode *sc, Blocks2 *blocks) {
   nob_log(INFO, "found %zu blocks", blocks->count);
 }
 
-// void exec_line_replacements(SourceCode *sc, Blocks2 *blocks, LineReplacements
-// *repls) {
-//     da_fore
-// }
-
-char **clone_argv(int argc, char **argv) {
-  char **copy = malloc((argc + 1) * sizeof(char *));
-  if (!copy)
-    return NULL;
-
-  for (int i = 0; i < argc; i++) {
-    copy[i] = strdup(argv[i]); // makes a copy of the string
-    if (!copy[i]) {
-      // cleanup if strdup fails
-      for (int j = 0; j < i; j++)
-        free(copy[j]);
-      free(copy);
-      return NULL;
-    }
-  }
-  copy[argc] = NULL; // NULL-terminate
-  return copy;
-}
-
 int main(int argc, char **argv) {
   nob_minimal_log_level = ERROR;
-  // nob_minimal_log_level = NOB_ERROR;
   if (argc < 2) {
     nob_log(NOB_ERROR,
             "usage: %s "
@@ -974,31 +562,12 @@ int main(int argc, char **argv) {
   nob_log(INFO, "Received %d arguments", argc);
 
   nob_log(INFO, "Using compiler %s", Parsed_Argv_compiler_name(&parsed_argv));
-  // const char *pp_input = temp_sprintf("%s.pre_cct.c", "CCT_OUT");
-  // Nob_Cmd pp = {0};
-  // cmd_append(&pp, Parsed_Argv_compiler_name(&parsed_argv));
-  // append_argv_pointers_to_cmd(&parsed_argv, &parsed_argv.input_files, &pp);
-  // append_argv_pointers_to_cmd(&parsed_argv, &parsed_argv.not_input_files,
-  // &pp); nob_cmd_append(&pp, "-E", "-P", "-CC"); nob_cmd_append(&pp, "-o",
-  // pp_input); nob_log(INFO, "Preprocessing TU"); if (!nob_cmd_run(&pp))
-  //   return 1;
-  // nob_log(INFO, "Done with preprocessing TU");
 
   Nob_Cmd final = {0};
   nob_cmd_append(&final, Parsed_Argv_compiler_name(&parsed_argv));
-  // nob_cmd_append(&final, pp_input);
   append_argv_pointers_to_cmd(&parsed_argv, &parsed_argv.not_input_files,
                               &final);
-  // nob_cmd_append(&final, )
-  // nob_cmd_append(&final, "-E", "-P", "-CC");
 
-  // char **new_argv = clone_argv(argc, argv);
-
-  // assert(parsed_argv.cct_entry);
-
-  // preprocess each TU
-  // Nob_Cmd cmd = {0};
-  //
   struct {
     const char **items;
     size_t count, capacity;
@@ -1019,8 +588,6 @@ int main(int argc, char **argv) {
     // -- PREPROCESS INPUT FILE (expand macros) --
     nob_log(INFO, "Processing %s source as SourceCode", input_filename);
     parse_source_file(input_filename, ctx.raw_source);
-    nob_log(INFO, "Input source is %zu lines long",
-            ctx.raw_source->lines.count);
 
     nob_log(INFO, "Preprocessing source");
     run_preprocess_cmd_for_source(&parsed_argv, input_filename,
@@ -1030,8 +597,6 @@ int main(int argc, char **argv) {
             ctx.preprocessed_path);
 
     parse_source_file(ctx.preprocessed_path, ctx.preprocessed_source);
-    nob_log(INFO, "Preprocessed source is %zu lines long",
-            ctx.preprocessed_source->lines.count);
 
     // -- EXTRACT COMPILE TIME BLOCKS --
     Blocks2 do_blocks = {0};
@@ -1078,22 +643,7 @@ int main(int argc, char **argv) {
       da_append(&files_to_remove, ctx.final_out_path);
     }
   }
-  // nob_da_foreach(int, index, &parsed_argv.not_input_files) {
-  //   nob_cmd_append(&final, argv[*index]);
-  // }
 
-  // Build final argv by
-  // replacing inputs with
-  // rewritten paths
-  // Nob_Cmd final = {0};
-  // nob_cmd_append(&final, Parsed_Argv_compiler_name(&parsed_argv));
-
-  // for (int i = 2; i < argc; i++) {
-  //   const char *tok = new_argv[i];
-  //   nob_cmd_append(&final, tok);
-  // }
-
-  // nob_cmd_append(&final, "-D__user_main=main");
   int result = nob_cmd_run(&final);
 
   // -- CLEANUP --
