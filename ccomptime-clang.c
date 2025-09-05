@@ -574,6 +574,46 @@ bool ValsFile_parse_next_replacement(String_View *contents, String_View *label,
   return true;
 }
 
+typedef struct {
+  String_Builder *builders;
+  size_t count;
+} StringBuilderArray;
+
+StringBuilderArray ValsFile_read_file(const char *path) {
+
+#define MAX_BLOCKS 5000
+  String_Builder out = {0};
+  nob_read_entire_file(path, &out);
+
+  String_View sv = sv_from_parts(out.items, out.count);
+
+  static String_Builder sba[MAX_BLOCKS] = {0};
+  for (size_t i = 0; i < MAX_BLOCKS; i++) {
+    sba[i].count = 0;
+  }
+
+  int max_index = 0;
+  while (1) {
+    String_View label, replacement = {0};
+    bool has_next = ValsFile_parse_next_replacement(&sv, &label, &replacement);
+    if (!has_next) {
+      break;
+    }
+    nob_log(INFO, "vals line [%.*s] : '%.*s'", (int)label.count, label.data,
+            (int)replacement.count, replacement.data);
+
+    int block_index = atoi(nob_temp_sv_to_cstr(label));
+    assert(block_index < MAX_BLOCKS);
+
+    sb_append_buf(&sba[block_index], replacement.data, replacement.count);
+
+    if (block_index > max_index) {
+      max_index = block_index;
+    }
+  }
+  return (StringBuilderArray){.builders = sba, .count = max_index + 1};
+}
+
 void map_blocks_to_replacements(Context *ctx, Blocks2 *blocks,
                                 String_Builder *out) {
   // String_Builder out = {0};
@@ -617,6 +657,119 @@ void map_blocks_to_replacements(Context *ctx, Blocks2 *blocks,
 
     flushed_until_ptr = (char *)b.end + 1;
   }
+
+  // copy the rest of the file
+  if (flushed_until_ptr < ctx->preprocessed_source->source.items +
+                              ctx->preprocessed_source->source.count) {
+    nob_log(INFO, "We have remaining source to flush (from %p to %p)",
+            flushed_until_ptr,
+            ctx->preprocessed_source->source.items +
+                ctx->preprocessed_source->source.count);
+    size_t n =
+        (size_t)(ctx->preprocessed_source->source.items +
+                 ctx->preprocessed_source->source.count - flushed_until_ptr);
+    sb_append_buf(out, flushed_until_ptr, n - 1);
+  }
+
+  // by default every block gets a NULL replacement
+
+  // if (vals.count == 0) {
+  //   nob_log(WARNING, "vals file %s is empty", path);
+  //   return;
+  // }
+
+  // String_View line;
+  // while (1) {
+  //   line = sv_chop_by_delim(&sv, '\n');
+  //   if (line.count == 0)
+  //     break;
+
+  //   nob_log(INFO, "vals line [%.*s]", (int)line.count, line.data);
+
+  //   String_View index_str = sv_chop_by_delim(&line, ':');
+  //   // int i = atoi(nob_temp_sv_to_cstr(index_str));
+
+  //   LineReplacement repl = (LineReplacement){
+  //       .label = strdup(nob_temp_sv_to_cstr(index_str)),
+  //       .replacement = strdup(nob_temp_sv_to_cstr(line)),
+  //   };
+
+  //   da_append(repls, repl);
+  // }
+}
+
+void map_blocks_to_replacements2(Context *ctx, Blocks2 *blocks,
+                                 String_Builder *out) {
+  // TODO::: for blocks find replacement in sba and do the flushing trick
+  //
+  // String_Builder out = {0};
+
+  // String_Builder vals = {0};
+  // nob_read_entire_file(ctx->vals_path, &vals);
+  // String_View sv = sv_from_parts(vals.items, vals.count);
+  StringBuilderArray sba = ValsFile_read_file(ctx->vals_path);
+
+  // int flushed_until = 0;
+  char *flushed_until_ptr = ctx->preprocessed_source->source.items;
+
+  // for each block
+  da_foreach(Block2, b, blocks) {
+    assert(b->block_index < sba.count);
+    String_Builder replacement = sba.builders[b->block_index];
+
+    assert(flushed_until_ptr <= b->beg);
+
+    // copy everything from flushed_until_ptr to b.beg
+    size_t n = (size_t)(b->beg - flushed_until_ptr);
+    nob_log(INFO, "appending %zu bytes of original source", n);
+    sb_append_buf(out, flushed_until_ptr, n);
+
+    if (replacement.count > 0) {
+      sb_append_buf(out, replacement.items, replacement.count);
+    }
+
+    flushed_until_ptr = (char *)b->end + 1;
+  }
+
+  // int sba_index = 0;
+  // while (1) {
+  //   if (sba_index >= sba.count) {
+  //     break;
+  //   }
+
+  //   String_Builder replacement = sba.builders[sba_index];
+  //   // String_View label, replacement = {0};
+
+  //   // bool has_next = ValsFile_parse_next_replacement(&sv, &label,
+  //   // &replacement); if (!has_next) {
+  //   //   break;
+  //   // }
+  //   nob_log(INFO, "vals line [%.*s] : '%.*s'", (int)label.count, label.data,
+  //           (int)replacement.count, replacement.data);
+
+  //   int block_index = atoi(nob_temp_sv_to_cstr(label));
+  //   assert(block_index < blocks->count);
+
+  //   Block2 b = blocks->items[block_index];
+  //   nob_log(INFO, "mapping replacement to block %s", b.block_id);
+  //   nob_log(INFO, "%p <= %p", flushed_until_ptr, b.beg);
+  //   assert(flushed_until_ptr <= b.beg);
+
+  //   // copy everything from flushed_until_ptr to b.beg
+  //   size_t n = (size_t)(b.beg - flushed_until_ptr);
+  //   nob_log(INFO, "appending %zu bytes of original source", n);
+  //   sb_append_buf(out, flushed_until_ptr, n);
+
+  //   nob_log(INFO, "appending replacement '%.*s'", (int)replacement.count,
+  //           replacement.data);
+
+  //   // append replacement
+  //   if (replacement.count > 0) {
+  //     sb_append_buf(out, replacement.data, replacement.count);
+  //   }
+
+  //   flushed_until_ptr = (char *)b.end + 1;
+  // }
 
   // copy the rest of the file
   if (flushed_until_ptr < ctx->preprocessed_source->source.items +
@@ -905,7 +1058,7 @@ int main(int argc, char **argv) {
     compile_and_run_runner(&ctx);
 
     String_Builder repls2 = {0};
-    map_blocks_to_replacements(&ctx, &do_blocks, &repls2);
+    map_blocks_to_replacements2(&ctx, &do_blocks, &repls2);
 
     nob_log(INFO, "WRTING FINAL OUTPUT FILE %s (%zu)bytes ", ctx.final_out_path,
             repls2.count);
