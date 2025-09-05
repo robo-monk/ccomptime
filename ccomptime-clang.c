@@ -1,4 +1,3 @@
-#include <assert.h>
 #include <stdint.h>
 #include <string.h>
 #define NOB_STRIP_PREFIX
@@ -576,15 +575,15 @@ bool ValsFile_parse_next_replacement(String_View *contents, String_View *label,
 }
 
 void map_blocks_to_replacements(Context *ctx, Blocks2 *blocks,
-                                BlockReplacements *repls) {
-  String_Builder out = {0};
+                                String_Builder *out) {
+  // String_Builder out = {0};
 
   String_Builder vals = {0};
   nob_read_entire_file(ctx->vals_path, &vals);
   String_View sv = sv_from_parts(vals.items, vals.count);
 
   // int flushed_until = 0;
-  char *flushed_until_ptr = ctx->raw_source->source.items;
+  char *flushed_until_ptr = ctx->preprocessed_source->source.items;
 
   while (1) {
     String_View label, replacement = {0};
@@ -606,23 +605,30 @@ void map_blocks_to_replacements(Context *ctx, Blocks2 *blocks,
     // copy everything from flushed_until_ptr to b.beg
     size_t n = (size_t)(b.beg - flushed_until_ptr);
     nob_log(INFO, "appending %zu bytes of original source", n);
-    sb_append_buf(&out, flushed_until_ptr, n);
+    sb_append_buf(out, flushed_until_ptr, n);
 
     nob_log(INFO, "appending replacement '%.*s'", (int)replacement.count,
             replacement.data);
 
     // append replacement
     if (replacement.count > 0) {
-      sb_append_buf(&out, replacement.data, replacement.count);
+      sb_append_buf(out, replacement.data, replacement.count);
     }
 
     flushed_until_ptr = (char *)b.end + 1;
   }
 
   // copy the rest of the file
-  if (flushed_until_ptr < vals.items + vals.count) {
-    size_t n = (size_t)(vals.items + vals.count - flushed_until_ptr);
-    sb_append_buf(&out, flushed_until_ptr, n);
+  if (flushed_until_ptr < ctx->preprocessed_source->source.items +
+                              ctx->preprocessed_source->source.count) {
+    nob_log(INFO, "We have remaining source to flush (from %p to %p)",
+            flushed_until_ptr,
+            ctx->preprocessed_source->source.items +
+                ctx->preprocessed_source->source.count);
+    size_t n =
+        (size_t)(ctx->preprocessed_source->source.items +
+                 ctx->preprocessed_source->source.count - flushed_until_ptr);
+    sb_append_buf(out, flushed_until_ptr, n - 1);
   }
 
   // by default every block gets a NULL replacement
@@ -729,26 +735,27 @@ void find_blocks2(SourceCode *sc, Blocks2 *blocks) {
     if (!beg) {
       break;
     }
+    const char *cursor = beg + strlen(BLOCK_FUNC_PREFIX);
     nob_log(INFO, "found beg at %p %c", beg, *beg);
 
-    beg += strlen(BLOCK_FUNC_PREFIX);
+    // beg += strlen(BLOCK_FUNC_PREFIX);
 
-    const char *stmt_name_beg = beg;
-    while (*beg && *beg != '(') {
-      beg++;
+    const char *stmt_name_beg = cursor;
+    while (*cursor && *cursor != '(') {
+      cursor++;
     }
 
     // extract name of the block
-    const char *block_id = strndup(stmt_name_beg, beg - stmt_name_beg);
+    const char *block_id = strndup(stmt_name_beg, cursor - stmt_name_beg);
     nob_log(INFO, "Block id is '%s'", block_id);
 
     // skip over the number and whitespace
-    while (*beg && *beg != '{') {
-      beg++;
+    while (*cursor && *cursor != '{') {
+      cursor++;
     }
 
-    const char *end = find_block_end(beg);
-    nob_log(INFO, "Block length is %zu", end - beg);
+    const char *end = find_block_end(cursor);
+    nob_log(INFO, "Block length is %zu", end - cursor);
 
     Block2 b = (Block2){.beg = beg,
                         .end = end,
@@ -897,8 +904,12 @@ int main(int argc, char **argv) {
     generate_runner_c(&ctx, &do_blocks);
     compile_and_run_runner(&ctx);
 
-    BlockReplacements repls2 = {0};
+    String_Builder repls2 = {0};
     map_blocks_to_replacements(&ctx, &do_blocks, &repls2);
+
+    nob_log(INFO, "WRTING FINAL OUTPUT FILE %s (%zu)bytes ", ctx.final_out_path,
+            repls2.count);
+    write_entire_file(ctx.final_out_path, repls2.items, repls2.count);
     exit(1);
     // -- COMPUTE REPLACEMENT INSTRUCTIONS --
     LineReplacements repls = {0};
