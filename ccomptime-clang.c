@@ -300,6 +300,8 @@ void compile_and_run_runner(Context *ctx) {
 
   if (!(ctx->parsed_argv->cct_flags & CliComptimeFlag_Debug)) {
     nob_cmd_append(&cmd, "-w");
+  } else {
+    nob_cmd_append(&cmd, "-g", "-fsanitize=address", "-fno-omit-frame-pointer");
   }
 
   nob_cmd_append(&cmd, "-o", ctx->runner_exepath);
@@ -345,14 +347,31 @@ void emit_runner_tu(Context *ctx, CtBlocks *comptime_blocks) {
 
   String_Builder main_body = {0};
 
-  for (size_t i = 0; i < comptime_blocks->count; i++) {
+  const CtBlock b = comptime_blocks->items[0];
+  assert(strcmp(b.block_id, "__top_level") == 0);
+  // DEFINE TOP LEVEL WRITER
+  sb_appendf(&sb, "DEFINE_LABELED_WRITER(__cct_write_%s, \"%zu\")\n",
+             b.block_id, b.block_index);
+
+  const CtBlock bottom_block =
+      comptime_blocks->items[comptime_blocks->count - 1];
+
+  assert(strcmp(bottom_block.block_id, "__bottom_level") == 0);
+  // DEFINE BOT LEVEL WRITER
+  sb_appendf(&sb, "DEFINE_LABELED_WRITER(__cct_write_%s, \"%zu\")\n",
+             bottom_block.block_id, bottom_block.block_index);
+
+  for (size_t i = 1; i < comptime_blocks->count - 1; i++) {
     CtBlock b = comptime_blocks->items[i];
+
+    // TODO ESCAPE THE WRITTEN STUFF
     sb_appendf(&sb, "DEFINE_LABELED_WRITER(__cct_write_%s, \"%zu\")\n",
                b.block_id, b.block_index);
 
     sb_appendf(&main_body,
-               BLOCK_ID_PREFIX
-               "%s(__cct_write_%s); // execute statement '%s' \n",
+               BLOCK_ID_PREFIX "%s(__cct_write_%s, __cct_write___top_level, "
+                               "__cct_write___bottom_level); // "
+                               "execute statement '%s' \n",
                b.block_id, b.block_id, b.block_id);
   }
 
@@ -392,9 +411,10 @@ typedef struct {
   size_t count;
 } StringBuilderArray;
 
+#define MAX_BLOCKS 5000
+
 StringBuilderArray ValsFile_read_file(const char *path) {
 
-#define MAX_BLOCKS 5000
   String_Builder out = {0};
   nob_read_entire_file(path, &out);
 
@@ -415,7 +435,9 @@ StringBuilderArray ValsFile_read_file(const char *path) {
     nob_log(INFO, "vals line [%.*s] : '%.*s'", (int)label.count, label.data,
             (int)replacement.count, replacement.data);
 
-    int block_index = atoi(nob_temp_sv_to_cstr(label));
+    const char *label_str = nob_temp_sv_to_cstr(label);
+
+    int block_index = atoi(label_str);
     assert(block_index < MAX_BLOCKS);
 
     sb_append_buf(&sba[block_index], replacement.data, replacement.count);
@@ -436,8 +458,11 @@ void substitute_block_values(Context *ctx, CtBlocks *blocks,
 
   // for each block
   da_foreach(CtBlock, b, blocks) {
-    assert(b->block_index < sba.count);
+    // assert(b->block_index < sba.count);
     String_Builder replacement = sba.builders[b->block_index];
+
+    nob_log(INFO, "Processing block '%s' (index %zu) [%zu bytes replacement]",
+            b->block_id, b->block_index, replacement.count);
 
     assert(flushed_until_ptr <= b->beg);
 
@@ -447,7 +472,17 @@ void substitute_block_values(Context *ctx, CtBlocks *blocks,
     sb_append_buf(out, flushed_until_ptr, n);
 
     if (replacement.count > 0) {
+      // sb_appendf(
+      //     out,
+      //     "/* -- START comptime REPLACEMENT FOR BLOCK '%s' (index %zu) --
+      //     */", b->block_id, b->block_index);
+
       sb_append_buf(out, replacement.items, replacement.count);
+
+      // sb_appendf(
+      //     out,
+      //     "/* -- END comptime REPLACEMENT FOR BLOCK '%s' (index %zu) -- */",
+      //     b->block_id, b->block_index);
     }
 
     flushed_until_ptr = (char *)b->end + 1;
@@ -501,6 +536,13 @@ void scan_ct_blocks(FileBuffer *sc, CtBlocks *blocks) {
   sc->source.items[sc->source.count] = '\0';
   const char *source = sc->source.items;
 
+  CtBlock top_level_block = {.beg = source,
+                             .end = source - 1,
+                             .block_id = "__top_level",
+                             .block_index = 0};
+
+  da_append(blocks, top_level_block);
+
   while (true) {
     const char *beg = strstr(source, BLOCK_FUNC_PREFIX);
     if (!beg) {
@@ -534,6 +576,14 @@ void scan_ct_blocks(FileBuffer *sc, CtBlocks *blocks) {
 
     source = (char *)end + 1;
   }
+
+  CtBlock bottom_level_block =
+      (CtBlock){.beg = sc->source.items + sc->source.count - 1,
+                .end = sc->source.items + sc->source.count - 2,
+                .block_id = "__bottom_level",
+                .block_index = blocks->count};
+
+  da_append(blocks, bottom_level_block);
 
   nob_log(INFO, "found %zu blocks", blocks->count);
 }

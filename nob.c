@@ -9,7 +9,7 @@ int main(int argc, char **argv) {
     return 1;
 
   Nob_Cmd cmd = {0};
-  nob_cc(&cmd);
+  nob_cmd_append(&cmd, "clang");
   nob_cc_flags(&cmd);
   nob_cc_output(&cmd, "build/ccomptime-clang");
 #if defined(_WIN32) && !defined(__clang__)
