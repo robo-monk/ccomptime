@@ -62,17 +62,10 @@ static Compiler parse_compiler_name(const char *name) {
 }
 
 typedef enum {
-  CCT_Flag_Kind_Debug,
-} CCT_Flag_Kind;
-
-typedef struct {
-  CCT_Flag_Kind kind;
-} CCT_Flag;
-
-typedef struct {
-  CCT_Flag *items;
-  size_t count, capacity;
-} CCT_Flags;
+  CliComptimeFlag_Debug = 1u << 0,
+  CliComptimeFlag_KeepInter = 1u << 1,
+  CliComptimeFlag_NoLogs = 1u << 2,
+} CliComptimeFlag;
 
 typedef struct {
   int argc;
@@ -80,7 +73,7 @@ typedef struct {
   Compiler compiler;
   ArgIndexList input_files;
   ArgIndexList not_input_files;
-  CCT_Flags cct_flags;
+  u_int32_t cct_flags;
 } CliArgs;
 
 #define TOOL_FLAG_PREFIX "-comptime"
@@ -90,7 +83,7 @@ CliArgs CliArgs_parse(int argc, char **argv) {
       .argv = argv,
       .argc = argc,
       .input_files = {0},
-      .cct_flags = {0},
+      .cct_flags = 0,
       .not_input_files = {0},
   };
 
@@ -117,11 +110,13 @@ CliArgs CliArgs_parse(int argc, char **argv) {
                 strcmp(flag, "-keep-inter"));
 
         if (strcmp(flag, "-debug") == 0) {
-          CCT_Flag cct_flag = {.kind = CCT_Flag_Kind_Debug};
-          da_append(&parsed_argv.cct_flags, cct_flag);
-          continue;
+          parsed_argv.cct_flags |= CliComptimeFlag_Debug;
+        } else if (strcmp(flag, "-no-logs") == 0) {
+          parsed_argv.cct_flags |= CliComptimeFlag_NoLogs;
+        } else if (strcmp(flag, "-keep-inter") == 0) {
+          parsed_argv.cct_flags |= CliComptimeFlag_KeepInter;
         } else {
-          nob_log(ERROR, "Unknown -cct flag: %s", flag);
+          nob_log(ERROR, "Unknown -comptime flag: %s", flag);
           exit(1);
         }
       } else {
@@ -290,7 +285,6 @@ static void Context_fill_paths(Context *ctx, const char *original_source) {
   ctx->final_out_path = leaky_sprintf("%sct-final.i", original_source);
 }
 
-// TODO: disable warnings emited if not -cct-debug
 void compile_and_run_runner(Context *ctx) {
   assert(ctx->runner_cpath);
   static Nob_Cmd cmd = {0};
@@ -303,6 +297,11 @@ void compile_and_run_runner(Context *ctx) {
   cmd_append_inputs_except(ctx->parsed_argv, ctx->input_path, &cmd);
   nob_cmd_append(&cmd, ctx->runner_cpath);
   nob_cmd_append(&cmd, "-Dmain=__cct_user_main", "-Dcct_runner_main=main");
+
+  if (!(ctx->parsed_argv->cct_flags & CliComptimeFlag_Debug)) {
+    nob_cmd_append(&cmd, "-w");
+  }
+
   nob_cmd_append(&cmd, "-o", ctx->runner_exepath);
 
   if (!nob_cmd_run(&cmd)) {
@@ -369,7 +368,6 @@ void emit_runner_tu(Context *ctx, CtBlocks *comptime_blocks) {
   nob_sb_append_cstr(&sb, "  fclose(__cct_file);\n"
                           "  return 0;\n"
                           "}\n");
-  nob_sb_append_null(&sb);
   write_entire_file(ctx->runner_cpath, sb.items, sb.count);
 }
 
@@ -490,7 +488,7 @@ static void run_preprocess_cmd_for_source(CliArgs *parsed_argv,
   nob_cmd_append(&pp_cmd, input_filename);
   cmd_append_arg_indeces(parsed_argv, &parsed_argv->not_input_files, &pp_cmd);
 
-  nob_cmd_append(&pp_cmd, "-CC", "-E");
+  nob_cmd_append(&pp_cmd, "-E");
   nob_cmd_append(&pp_cmd, "-o", output_filename);
 
   if (!nob_cmd_run(&pp_cmd)) {
@@ -551,21 +549,16 @@ int main(int argc, char **argv) {
     return 1;
   }
 
+  nob_log(INFO, "Parsing arguments");
   CliArgs parsed_argv = CliArgs_parse(argc, argv);
-  bool cleanup_files = true;
 
-  da_foreach(CCT_Flag, flag, &parsed_argv.cct_flags) {
-    switch (flag->kind) {
-    case CCT_Flag_Kind_Debug:
-      cleanup_files = false;
-      nob_minimal_log_level = INFO;
-      nob_log(INFO, "Debug mode enabled");
-      break;
-    }
+  if (parsed_argv.cct_flags & CliComptimeFlag_NoLogs) {
+    nob_minimal_log_level = NO_LOGS;
+  } else if (parsed_argv.cct_flags & CliComptimeFlag_Debug) {
+    nob_minimal_log_level = INFO;
   }
 
   nob_log(INFO, "Received %d arguments", argc);
-
   nob_log(INFO, "Using compiler %s", Parsed_Argv_compiler_name(&parsed_argv));
 
   Nob_Cmd final = {0};
@@ -638,25 +631,26 @@ int main(int argc, char **argv) {
     nob_log(INFO, "Appended final output file %s to final argv",
             ctx.final_out_path);
 
-    if (cleanup_files) {
-      da_append(&files_to_remove, ctx.preprocessed_path);
-      da_append(&files_to_remove, ctx.runner_cpath);
-      da_append(&files_to_remove, ctx.runner_exepath);
-      da_append(&files_to_remove, ctx.vals_path);
-      da_append(&files_to_remove, ctx.final_out_path);
-    }
+    da_append(&files_to_remove, ctx.preprocessed_path);
+    da_append(&files_to_remove, ctx.runner_cpath);
+    da_append(&files_to_remove, ctx.runner_exepath);
+    da_append(&files_to_remove, ctx.vals_path);
+    da_append(&files_to_remove, ctx.final_out_path);
   }
 
-  int result = nob_cmd_run(&final);
+  if (!cmd_run(&final)) {
+    nob_log(ERROR, "failed to compile final output");
+    return 1;
+  }
 
   // -- CLEANUP --
   nob_da_foreach(const char *, f, &files_to_remove) {
-    if (cleanup_files) {
+    if (!(parsed_argv.cct_flags & CliComptimeFlag_KeepInter)) {
       delete_file(*f);
     } else {
       nob_log(INFO, "Keeping intermediate file %s", *f);
     }
-  }
 
-  return 0;
+    return 0;
+  }
 }

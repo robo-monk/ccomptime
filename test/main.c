@@ -39,11 +39,38 @@ int compute() {
   return a + b;
 };
 
-// $COMPTIME_INT(result, compute());
+#define GREEN(str) "\033[0;32m" str "\033[0m"
+#define RED(str) "\033[0;31m" str "\033[0m"
+#define GRAY(str) "\033[0;90m" str "\033[0m"
+
+void test_assert(int condition, const char *message) {
+  if (!condition) {
+    fprintf(stderr, RED("[FAILED]") GRAY(" %s\n"), message);
+  } else {
+    printf(GREEN("[PASSED]") GRAY(" %s\n"), message);
+  }
+}
+
+comptime { test_assert(compute() == 420, "compute() should be 420"); }
+
+int fibo(int n) {
+  if (n <= 1)
+    return n;
+  return fibo(n - 1) + fibo(n - 2);
+}
+
+comptime {
+  test_assert(fibo(10) == 55, "fibo(10) should be 55");
+  test_assert(fibo(20) == 6765, "fibo(20) should be 6765");
+  test_assert(fibo(30) == 832040, "fibo(30) should be 832040");
+  // test_assert(fibo(42) == 2, "fibo(42) should be 267914296");
+  test_assert(fibo(0) == 0, "fibo(0) should be 0");
+  test_assert(fibo(1) == 1, "fibo(1) should be 1");
+  test_assert(false, "..");
+}
 
 comptime {
   printf("\n\nHello from the comptime!\n\n");
-
   $$("int result = %d;", compute());
 }
 
