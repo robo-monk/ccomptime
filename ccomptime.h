@@ -19,11 +19,4 @@ typedef int (*CCT_write_in_place_fn)(const char *fmt, ...)
 
 #define comptime FN_LINE
 
-#define comptime_inline(code)                                                  \
-  /* CCT_INLINE_STMT */ while (__COUNTER__ + 1) {                              \
-    extern CCT_write_in_place_fn $$;                                           \
-    extern CCT_write_in_place_fn $$_top_level;                                 \
-    code                                                                       \
-  }
-
 #endif

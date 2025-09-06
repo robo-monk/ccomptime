@@ -92,20 +92,41 @@ SQLQuery SQL_parse(const char *q) {
     $$("add(a,b)");                                                            \
   }
 
-// #define add(type, a, b, result)                                                \
-//   comptime { $$("add(a,b)"); }
+#define typename(x)                                                            \
+  _Generic((x), \
+      int: "int", \
+      double: "double", \
+      char*: "char*", \
+      default: "unknown" \
+  )
+
+#define add(type, a, b)                                                        \
+  (type) comptime_inline({                                                     \
+    assert(strcmp(typename(a), typename(b)) == 0 &&                            \
+           "types should be the same");                                        \
+    printf("Got types (%s) a and (%s) b\n", typename(a), typename(b));         \
+    const char *t = #type;                                                     \
+    $$_top_level("\n%s add_%s(%s a, %s b);\n", t, t, t, t);                    \
+    $$_bottom_level("\n%s add_%s(%s a, %s b) { return a + b; }\n", t, t, t,    \
+                    t);                                                        \
+    $$("add_%s(%s,%s);", t, #a, #b);                                           \
+  })
+
+#define comptime_inline(expression)                                            \
+  /*void CCT_STMT_$INLINE(*/ #expression /*__cct_end*/
 
 int result2;
-add(int, 1, 2, &result2);
+// add(int, 1, 2, &result2);
 
 comptime {
   printf("\n\n\n\n\nComptime block executed at runtime!\n\n\n\n\n\n");
 }
 
 int main() {
-  int query = inline_comptime SQL_parse("SELECT * FROM users WHERE id = 1;");
 
-  printf("Hello! -> (result2 is %d) ", result2);
+  int query2 = add_inline(int, 50, 5);
+
+  printf("Hello! -> (result2 is %d and query2 is %d) ", result2, query2);
 
   // add(int, 1, 2);
   return 42;

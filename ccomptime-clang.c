@@ -19,10 +19,17 @@ static bool has_prefix(const char *s, const char *pre) {
   return strncmp(s, pre, np) == 0;
 }
 
+typedef enum {
+  CtBlockKind_Inline,
+  CtBlockKind_Function,
+
+} CtBlockKind;
+
 typedef struct {
   const char *beg, *end;
   const char *block_id;
   size_t block_index;
+  CtBlockKind kind;
 } CtBlock;
 
 typedef struct {
@@ -222,6 +229,23 @@ const char *scan_balanced_brace(const char *ccode) {
   return NULL; // No matching brace found
 }
 
+void parse_stringified_c_code(const char *line, Nob_String_Builder *out) {
+  assert(line[0] == '"');
+  nob_log(INFO, "parsing line %s", line);
+
+  const char *ptr = line + 1; // Start after the opening brace
+  while (*ptr != '\0') {
+    if (*ptr == '\\' && *(ptr + 1) != '\0') {
+      ptr++; // Skip escaped character
+    } else if (*ptr == '"') {
+      break;
+    }
+
+    nob_da_append(out, *ptr);
+    ptr++;
+  }
+}
+
 void cmd_append_inputs_except(CliArgs *pa, const char *skip_input, Cmd *cmd) {
   nob_da_foreach(int, index, &pa->input_files) {
     const char *f = pa->argv[*index];
@@ -331,19 +355,55 @@ void emit_runner_tu(Context *ctx, CtBlocks *comptime_blocks) {
                 ctx->raw_source->source.count - 1);
   sb_appendf(&sb, "\n#undef main\n");
   sb_appendf(&sb, "\n// -- SOURCE FILE END -- \n\n");
+  // Function to write escaped strings
+  sb_append_cstr(
+      &sb,
+      "static void cct_write_escaped(FILE* f, const char* s){\n"
+      "    if(!s) return;\n"
+      "    for (const unsigned char* p=(const unsigned char*)s; *p; ++p){\n"
+      "        unsigned char c=*p;\n"
+      "        if(c=='\\\\' || c=='\"'){ fputc('\\\\',f); fputc(c,f); }\n"
+      "        else if(c=='\\n') fputs(\"\\\\n\",f);\n"
+      "        else if(c=='\\r') fputs(\"\\\\r\",f);\n"
+      "        else if(c=='\\t') fputs(\"\\\\t\",f);\n"
+      "        else fputc(c,f);\n"
+      "    }\n"
+      "}\n");
 
   sb_append_cstr(&sb, "\nFILE* __cct_file;\n");
-  sb_append_cstr(&sb,
-                 "#define DEFINE_LABELED_WRITER(name, label_str)          \\\n"
-                 "int name(const char *fmt, ...) {                        \\\n"
-                 "    va_list args;                                       \\\n"
-                 "    va_start(args, fmt);                                \\\n"
-                 "    fprintf(__cct_file, \"%s:\", label_str);            \\\n"
-                 "    vfprintf(__cct_file, fmt, args);                    \\\n"
-                 "    fprintf(__cct_file, \"\\n\");                       \\\n"
-                 "    va_end(args);                                       \\\n"
-                 "    return 0;                                           \\\n"
-                 "}\n");
+
+  // Fixed macro that uses dynamic allocation and escaping
+  sb_append_cstr(&sb, "#define DEFINE_LABELED_WRITER(name, label_str) \\\n"
+                      "int name(const char *fmt, ...) { \\\n"
+                      "    va_list args; \\\n"
+                      "    int size; \\\n"
+                      "    char* buffer; \\\n"
+                      "    \\\n"
+                      "    /* Get required size */ \\\n"
+                      "    va_start(args, fmt); \\\n"
+                      "    size = vsnprintf(NULL, 0, fmt, args); \\\n"
+                      "    va_end(args); \\\n"
+                      "    \\\n"
+                      "    if (size < 0) return -1; \\\n"
+                      "    \\\n"
+                      "    /* Allocate buffer (+1 for null terminator) */ \\\n"
+                      "    buffer = (char*)malloc(size + 1); \\\n"
+                      "    if (!buffer) return -1; \\\n"
+                      "    \\\n"
+                      "    /* Format the string */ \\\n"
+                      "    va_start(args, fmt); \\\n"
+                      "    vsnprintf(buffer, size + 1, fmt, args); \\\n"
+                      "    va_end(args); \\\n"
+                      "    \\\n"
+                      "    /* Write label and escaped content */ \\\n"
+                      "    fprintf(__cct_file, \"%s:\", label_str); \\\n"
+                      "    cct_write_escaped(__cct_file, buffer); \\\n"
+                      "    fprintf(__cct_file, \"\\n\"); \\\n"
+                      "    \\\n"
+                      "    /* Clean up */ \\\n"
+                      "    free(buffer); \\\n"
+                      "    return 0; \\\n"
+                      "}\n");
 
   String_Builder main_body = {0};
 
@@ -367,6 +427,24 @@ void emit_runner_tu(Context *ctx, CtBlocks *comptime_blocks) {
     // TODO ESCAPE THE WRITTEN STUFF
     sb_appendf(&sb, "DEFINE_LABELED_WRITER(__cct_write_%s, \"%zu\")\n",
                b.block_id, b.block_index);
+
+    if (b.kind == CtBlockKind_Inline) {
+      // parse the inline block, extract the content between
+      // /*INLINE_COMPTIME*/ and /*__cct_end*/, and wrap it in a function
+      // move cursor to first '"'
+      const char *cursor = strchr(b.beg, '"');
+      String_Builder inline_body = {0};
+      parse_stringified_c_code(cursor, &inline_body);
+      nob_log(INFO, "Parsed [INLINE] block: %.*s", (int)inline_body.count,
+              inline_body.items);
+
+      sb_appendf(
+          &sb,
+          "void " BLOCK_ID_PREFIX
+          "%s(CCT_write_in_place_fn $$, CCT_write_in_place_fn "
+          "$$_top_level, CCT_write_in_place_fn $$_bottom_level) { %.*s }",
+          b.block_id, (int)inline_body.count, inline_body.items);
+    }
 
     sb_appendf(&main_body,
                BLOCK_ID_PREFIX "%s(__cct_write_%s, __cct_write___top_level, "
@@ -440,7 +518,37 @@ StringBuilderArray ValsFile_read_file(const char *path) {
     int block_index = atoi(label_str);
     assert(block_index < MAX_BLOCKS);
 
-    sb_append_buf(&sba[block_index], replacement.data, replacement.count);
+    String_Builder parsed_replacement = {0};
+    // unescape the replacement string
+    size_t i = 0;
+    while (i < replacement.count) {
+      if (replacement.data[i] == '\\') {
+        i++; // skip the backslash
+        nob_log(INFO, "FOUND escape %c", replacement.data[i]);
+        switch (replacement.data[i++]) {
+        case 'n':
+          da_append(&parsed_replacement, '\n');
+          break;
+        case 'r':
+          da_append(&parsed_replacement, '\r');
+          break;
+        case 't':
+          da_append(&parsed_replacement, '\t');
+          break;
+        case '\\':
+          da_append(&parsed_replacement, '\\');
+          break;
+        default:
+          assert(0 && "unknown esc seq");
+          break;
+        }
+      } else {
+        da_append(&parsed_replacement, replacement.data[i++]);
+      }
+    }
+
+    sb_append_buf(&sba[block_index], parsed_replacement.items,
+                  parsed_replacement.count);
 
     if (block_index > max_index) {
       max_index = block_index;
@@ -463,6 +571,8 @@ void substitute_block_values(Context *ctx, CtBlocks *blocks,
 
     nob_log(INFO, "Processing block '%s' (index %zu) [%zu bytes replacement]",
             b->block_id, b->block_index, replacement.count);
+    nob_log(INFO, "Replacement is -> %.*s", (int)replacement.count,
+            replacement.items);
 
     assert(flushed_until_ptr <= b->beg);
 
@@ -481,8 +591,8 @@ void substitute_block_values(Context *ctx, CtBlocks *blocks,
 
       // sb_appendf(
       //     out,
-      //     "/* -- END comptime REPLACEMENT FOR BLOCK '%s' (index %zu) -- */",
-      //     b->block_id, b->block_index);
+      //     "/* -- END comptime REPLACEMENT FOR BLOCK '%s' (index %zu) --
+      //     */", b->block_id, b->block_index);
     }
 
     flushed_until_ptr = (char *)b->end + 1;
@@ -523,7 +633,7 @@ static void run_preprocess_cmd_for_source(CliArgs *parsed_argv,
   nob_cmd_append(&pp_cmd, input_filename);
   cmd_append_arg_indeces(parsed_argv, &parsed_argv->not_input_files, &pp_cmd);
 
-  nob_cmd_append(&pp_cmd, "-E");
+  nob_cmd_append(&pp_cmd, "-E", "-CC");
   nob_cmd_append(&pp_cmd, "-o", output_filename);
 
   if (!nob_cmd_run(&pp_cmd)) {
@@ -549,7 +659,7 @@ void scan_ct_blocks(FileBuffer *sc, CtBlocks *blocks) {
       break;
     }
     const char *cursor = beg + strlen(BLOCK_FUNC_PREFIX);
-    nob_log(INFO, "found beg at %p %c", beg, *beg);
+    nob_log(INFO, "Found beg at %p %c", beg, *beg);
     // skip whitespace
     const char *stmt_name_beg = cursor;
     while (*cursor && *cursor != '(') {
@@ -560,21 +670,40 @@ void scan_ct_blocks(FileBuffer *sc, CtBlocks *blocks) {
     const char *block_id = strndup(stmt_name_beg, cursor - stmt_name_beg);
     nob_log(INFO, "Block id is '%s'", block_id);
 
-    // skip over the number and whitespace
-    while (*cursor && *cursor != '{') {
-      cursor++;
+    if (strcmp(block_id, "INLINE") == 0) {
+      const char *end_mark = "/*__cct_end*/";
+      const char *end = strstr(cursor, end_mark) + strlen(end_mark);
+
+      nob_log(INFO, "--> Found Inline block, (%zu)", end - beg);
+
+      CtBlock b =
+          (CtBlock){.beg = beg - strlen("/*"), // we start from the /*
+                    .end = end,
+                    .kind = CtBlockKind_Inline,
+                    .block_id = leaky_sprintf("inline_%zu", blocks->count),
+                    .block_index = blocks->count};
+
+      da_append(blocks, b);
+      source = (char *)end + 1;
+    } else {
+
+      // skip over the number and whitespace
+      while (*cursor && *cursor != '{') {
+        cursor++;
+      }
+
+      const char *end = scan_balanced_brace(cursor);
+      nob_log(INFO, "Block length is %zu", end - cursor);
+
+      CtBlock b = (CtBlock){.beg = beg,
+                            .end = end,
+                            .kind = CtBlockKind_Function,
+                            .block_id = block_id,
+                            .block_index = blocks->count};
+      da_append(blocks, b);
+
+      source = (char *)end + 1;
     }
-
-    const char *end = scan_balanced_brace(cursor);
-    nob_log(INFO, "Block length is %zu", end - cursor);
-
-    CtBlock b = (CtBlock){.beg = beg,
-                          .end = end,
-                          .block_id = block_id,
-                          .block_index = blocks->count};
-    da_append(blocks, b);
-
-    source = (char *)end + 1;
   }
 
   CtBlock bottom_level_block =
