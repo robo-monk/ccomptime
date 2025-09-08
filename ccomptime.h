@@ -1,6 +1,7 @@
 #ifndef CCOMPTIME_H
 #define CCOMPTIME_H
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,6 +17,12 @@ typedef int (*CCT_write_in_place_fn)(const char *fmt, ...)
   void CONCAT(CCT_STMT_$, __COUNTER__)(CCT_write_in_place_fn $$,               \
                                        CCT_write_in_place_fn $$_top_level,     \
                                        CCT_write_in_place_fn $$_bottom_level)
+
+#define comptime_inline(expression)                                            \
+  /*void CCT_STMT_$INLINE(*/ #expression /*__cct_end*/
+
+#define comptime_inline_typed(type, expression)                                \
+  /*void CCT_STMT_$INLINE(*/ (#expression, (type)) /*__cct_end*/
 
 #define comptime FN_LINE
 

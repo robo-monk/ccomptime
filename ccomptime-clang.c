@@ -229,7 +229,8 @@ const char *scan_balanced_brace(const char *ccode) {
   return NULL; // No matching brace found
 }
 
-void parse_stringified_c_code(const char *line, Nob_String_Builder *out) {
+const char *parse_stringified_c_code(const char *line,
+                                     Nob_String_Builder *out) {
   assert(line[0] == '"');
   nob_log(INFO, "parsing line %s", line);
 
@@ -244,6 +245,8 @@ void parse_stringified_c_code(const char *line, Nob_String_Builder *out) {
     nob_da_append(out, *ptr);
     ptr++;
   }
+  assert(*ptr == '"');
+  return ptr;
 }
 
 void cmd_append_inputs_except(CliArgs *pa, const char *skip_input, Cmd *cmd) {
@@ -434,9 +437,12 @@ void emit_runner_tu(Context *ctx, CtBlocks *comptime_blocks) {
       // move cursor to first '"'
       const char *cursor = strchr(b.beg, '"');
       String_Builder inline_body = {0};
-      parse_stringified_c_code(cursor, &inline_body);
+      const char *stmt_end = parse_stringified_c_code(cursor, &inline_body);
       nob_log(INFO, "Parsed [INLINE] block: %.*s", (int)inline_body.count,
               inline_body.items);
+
+      const char *end_marker = "/*__cct_end*/";
+      const char *end_marker_pos = strstr(stmt_end, end_marker);
 
       sb_appendf(
           &sb,
@@ -525,6 +531,7 @@ StringBuilderArray ValsFile_read_file(const char *path) {
       if (replacement.data[i] == '\\') {
         i++; // skip the backslash
         nob_log(INFO, "FOUND escape %c", replacement.data[i]);
+        // da_append(&parsed_replacement, replacement.data[i++]);
         switch (replacement.data[i++]) {
         case 'n':
           da_append(&parsed_replacement, '\n');
@@ -539,6 +546,12 @@ StringBuilderArray ValsFile_read_file(const char *path) {
           da_append(&parsed_replacement, '\\');
           break;
         default:
+          // da_append(&parsed_replacement, 'replacement.data[i - 1]);');
+          nob_log(
+              ERROR,
+              "unknown escape sequence \\%c in replacement string \n: '%.*s' ",
+              replacement.data[i - 1], (int)replacement.count,
+              replacement.data);
           assert(0 && "unknown esc seq");
           break;
         }
@@ -810,10 +823,16 @@ int main(int argc, char **argv) {
     nob_log(INFO, "Appended final output file %s to final argv",
             ctx.final_out_path);
 
+    nob_log(INFO, "Scheduling intermediate files for deletion");
+    nob_log(INFO, "-> %s", ctx.preprocessed_path);
     da_append(&files_to_remove, ctx.preprocessed_path);
+    nob_log(INFO, "-> %s", ctx.runner_cpath);
     da_append(&files_to_remove, ctx.runner_cpath);
+    nob_log(INFO, "-> %s", ctx.runner_exepath);
     da_append(&files_to_remove, ctx.runner_exepath);
+    nob_log(INFO, "-> %s", ctx.vals_path);
     da_append(&files_to_remove, ctx.vals_path);
+    nob_log(INFO, "-> %s", ctx.final_out_path);
     da_append(&files_to_remove, ctx.final_out_path);
   }
 
@@ -825,6 +844,7 @@ int main(int argc, char **argv) {
   // -- CLEANUP --
   nob_da_foreach(const char *, f, &files_to_remove) {
     if (!(parsed_argv.cct_flags & CliComptimeFlag_KeepInter)) {
+      nob_log(INFO, "Deleting intermediate file %s", *f);
       delete_file(*f);
     } else {
       nob_log(INFO, "Keeping intermediate file %s", *f);

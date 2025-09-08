@@ -1,6 +1,5 @@
 const static int first = __LINE__;
 #include "../ccomptime.h"
-#include <stdatomic.h>
 #define NOB_IMPLEMENTATION
 #include "../nob.h"
 // #include "another.c"
@@ -82,16 +81,6 @@ SQLQuery SQL_parse(const char *q) {
   return 42;
 }
 
-#define add(type, a, b, result)                                                \
-  comptime {                                                                   \
-    const char *t = #type;                                                     \
-    $$_top_level("\n%s _cct_add_%s(%s a, %s b);\n", t, t, t, t);               \
-    $$_bottom_level(                                                           \
-        "\n%s add_%s(%s a, %s b, %s*result) { *result = a + b; }\n", t, t, t,  \
-        t, t);                                                                 \
-    $$("add(a,b)");                                                            \
-  }
-
 #define typename(x)                                                            \
   _Generic((x), \
       int: "int", \
@@ -100,31 +89,93 @@ SQLQuery SQL_parse(const char *q) {
       default: "unknown" \
   )
 
+const char *func_definitions[500] = {};
+size_t func_def_count = 0;
+bool _has_func_def(const char *def) {
+  for (size_t i = 0; i < func_def_count; i++) {
+    if (strcmp(func_definitions[i], def) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+void _append_function_definition(const char *def) {
+  func_definitions[func_def_count++] = def;
+}
+
+// #define add(type, a, b)                                                        \
+//   (/* compile-time side effects */                                             \
+//    comptime_inline({                                                           \
+//      assert(strcmp(typename(a), typename(b)) == 0 &&                           \
+//             "types should be the same");                                       \
+//      printf("Got types (%s) a and (%s) b\n", typename(a), typename(b));        \
+//      const char *t = #type;                                                    \
+//      const char *func_sign =                                                   \
+//          nob_temp_sprintf("%s add_%s(%s a, %s b)", t, t, t, t);                \
+//      if (!_has_func_def(func_sign)) {                                          \
+//        printf("[POLYMORPHISM] Generating... %s\n", func_sign);                 \
+//        _append_function_definition(func_sign);                                 \
+//        $$_top_level("\n%s;\n", func_sign);                                     \
+//        $$_bottom_level("\n%s { return a + b; }\n", func_sign);                 \
+//      }                                                                         \
+//      $$("add_%s(%s,%s);", t, #a, #b);                                          \
+//    }),                                                                         \
+//    (type)0)
+
 #define add(type, a, b)                                                        \
-  (type) comptime_inline({                                                     \
+  comptime_inline_typed((type)0, {                                             \
     assert(strcmp(typename(a), typename(b)) == 0 &&                            \
            "types should be the same");                                        \
     printf("Got types (%s) a and (%s) b\n", typename(a), typename(b));         \
     const char *t = #type;                                                     \
-    $$_top_level("\n%s add_%s(%s a, %s b);\n", t, t, t, t);                    \
-    $$_bottom_level("\n%s add_%s(%s a, %s b) { return a + b; }\n", t, t, t,    \
-                    t);                                                        \
+    const char *func_sign =                                                    \
+        nob_temp_sprintf("%s add_%s(%s a, %s b)", t, t, t, t);                 \
+    if (!_has_func_def(func_sign)) {                                           \
+      printf("[POLYMORPHISM] Generating... %s\n", func_sign);                  \
+      _append_function_definition(func_sign);                                  \
+      $$_top_level("\n%s;\n", func_sign);                                      \
+      $$_bottom_level("\n%s { return a + b; }\n", func_sign);                  \
+    }                                                                          \
     $$("add_%s(%s,%s);", t, #a, #b);                                           \
   })
-
-#define comptime_inline(expression)                                            \
-  /*void CCT_STMT_$INLINE(*/ #expression /*__cct_end*/
 
 int result2;
 // add(int, 1, 2, &result2);
 
 comptime {
   printf("\n\n\n\n\nComptime block executed at runtime!\n\n\n\n\n\n");
+
+  // THIS will not work since we generate the add function during comptime,
+  // thus during comptime its not available
+  //
+  // maybe we can have a two-pass system where we first generate all the
+  // functions then in the second pass we can use them?
+
+  // int query2 = add(int, 50, 5);
+  // int query3 = add(int, 100, 20);
+  // float query4 = add(float, 1.5, 2.5);
+  // double query5 = add(double, 2.5, 3.5);
+
+  // test_assert(query2 == 55, "query2 should be 55");
+  // test_assert(query3 == 120, "query3 should be 120");
+  // test_assert(query4 == 4.0f, "query4 should be 4.0f");
+  // test_assert(query5 == 6.0, "query5 should be 6.0");
 }
 
 int main() {
 
-  int query2 = add_inline(int, 50, 5);
+  int query2 = add(int, 50, 5);
+  int query3 = add(int, 100, 20);
+  float query4 = add(float, 1.5, 2.5);
+  double query5 = add(double, 2.5, 3.5);
+
+  // char sql = add(char, 'a', 'b');
+  // char *vv = add((char *), "hello", "b");
+
+  assert(query2 == 55 && "query2 should be 55");
+  assert(query3 == 120 && "query3 should be 120");
+  assert(query4 == 4.0f && "query4 should be 4.0f");
+  assert(query5 == 6.0 && "query5 should be 6.0");
 
   printf("Hello! -> (result2 is %d and query2 is %d) ", result2, query2);
 
