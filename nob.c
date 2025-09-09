@@ -11,16 +11,16 @@ int main(int argc, char **argv) {
   Nob_Cmd cmd = {0};
   nob_cmd_append(&cmd, "clang");
   nob_cc_flags(&cmd);
-  nob_cc_output(&cmd, "build/ccomptime-clang");
+  nob_cc_output(&cmd, "build/ccomptime");
 #if defined(_WIN32) && !defined(__clang__)
   nob_cmd_append(&cmd, "/O2");
 #else
   nob_cmd_append(&cmd, "-O3");
 #endif
-  nob_cc_inputs(&cmd, "ccomptime-clang.c");
+  nob_cc_inputs(&cmd, "ccomptime.c");
   if (!nob_cmd_run(&cmd))
     return 1;
 
-  nob_log(NOB_INFO, "Built build/ccomptime-clang");
+  nob_log(NOB_INFO, "Built build/ccomptime");
   return 0;
 }

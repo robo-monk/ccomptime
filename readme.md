@@ -38,9 +38,24 @@ void generate_file() {
     fclose(f);
 }
 
+long long fibo(long long n) {
+  if (n <= 1)
+    return n;
+  long long a = 0, b = 1, c;
+  for (long long i = 2; i <= n; i++) {
+    c = a + b;
+    a = b;
+    b = c;
+  }
+  return b;
+}
+
+comptime { generate_file(); }
+
 int main() {
-    $comptime(generate_file(););
-    printf("Runtime code here\n");
+    long long res = comptime_inline_infer(fibo(34 + 35)); // value will be computed at compile time and inlined here
+
+    printf("Res is %llu\n", res);
     return 0;
 }
 ```
@@ -49,7 +64,7 @@ The compile-time code runs during compilation, generating `generated.h` before t
 
 ## How it works
 
-1. Preprocesses source files to find `$comptime()` blocks
+1. Preprocesses source files to find `comptime` blocks
 2. Extracts compile-time code into a separate "runner" program
 3. Compiles and executes the runner to generate replacements
 4. Rewrites the original source with results

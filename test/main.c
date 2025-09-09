@@ -52,11 +52,23 @@ void test_assert(int condition, const char *message) {
 
 comptime { test_assert(compute() == 420, "compute() should be 420"); }
 
-int fibo(int n) {
+long long fibo(long long n) {
   if (n <= 1)
     return n;
   return fibo(n - 1) + fibo(n - 2);
 }
+
+// long long fibo(long long n) {
+//   if (n <= 1)
+//     return n;
+//   long long a = 0, b = 1, c;
+//   for (long long i = 2; i <= n; i++) {
+//     c = a + b;
+//     a = b;
+//     b = c;
+//   }
+//   return b;
+// }
 
 #define inline_comptime /*INLINE_COMPTIME*/
 
@@ -136,8 +148,49 @@ void _append_function_definition(const char *def) {
       $$_top_level("\n%s;\n", func_sign);                                      \
       $$_bottom_level("\n%s { return a + b; }\n", func_sign);                  \
     }                                                                          \
-    $$("add_%s(%s,%s);", t, #a, #b);                                           \
+    $$("add_%s(%s,%s)", t, #a, #b);                                            \
   })
+
+#define comptime_inline_value(expr, type, fmt)                                 \
+  comptime_inline_typed((type)0, { $$(fmt, expr); })
+
+#define comptime_inline_int(expr) comptime_inline_value(expr, int, "%d")
+#define comptime_inline_float(expr) comptime_inline_value(expr, float, "%f")
+#define comptime_inline_double(expr) comptime_inline_value(expr, double, "%lf")
+#define comptime_inline_long_long(expr)                                        \
+  comptime_inline_value(expr, long long, "%lld")
+
+#define default_value_for(expr)                                                \
+  _Generic((expr),                                                            \
+        int: 0,                                                                 \
+        float: 0.0f,                                                           \
+        double: 0.0,                                                           \
+        long long: 0LL,                                                        \
+        char: '\0',                                                            \
+        char *: NULL,                                                          \
+        default: NULL                                                          \
+    )
+
+#define fmt_for(expr)                                                          \
+  _Generic((expr),                                                            \
+      int: "%d",                                                              \
+      float: "%f",                                                            \
+      double: "%lf",                                                          \
+      long long: "%lld",                                                      \
+      char: "%c",                                                             \
+      char *: "%s",                                                           \
+      default: "unknown"                                                      \
+  )
+
+// #define comptime_inline_infer(expr)                                            \
+//   comptime_inline_value(expr, __typeof__(expr), (fmt_for(expr)))
+
+#define _comptime_inline_typed_value(expr, default, fmt)                       \
+  comptime_inline_typed(default, { $$(fmt, expr); })
+
+#define comptime_inline_infer(expr)                                            \
+  _comptime_inline_typed_value(expr, default_value_for(expr), (fmt_for(expr)))
+// comptime_inline_value(expr, __typeof__(expr), (fmt_for(expr)))
 
 int result2;
 // add(int, 1, 2, &result2);
@@ -162,7 +215,15 @@ comptime {
   // test_assert(query5 == 6.0, "query5 should be 6.0");
 }
 
+#define auto_var(name, expr) __typeof__(expr) name = expr;
+
 int main() {
+
+  long long res =
+      comptime_inline_infer(fibo(43)); // very slow but we are baking it in!
+  printf("res is %llu\n", res);
+
+  assert(res == 433494437 && "fib should be 117669030460994");
 
   int query2 = add(int, 50, 5);
   int query3 = add(int, 100, 20);
