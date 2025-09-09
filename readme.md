@@ -5,26 +5,31 @@ A drop-in replacement for `clang` that adds compile-time code execution to C.
 
 ## Overview
 
-`ccomptime` allows you to run C code at compile time using the `$comptime()` directive. The code executes during compilation and can generate files, perform calculations, or modify the compilation process.
+`ccomptime` allows you to run C code at compile time using `comptime`, `inline_comptime` directives. The code executes during compilation and can generate code, files, and anything really. You keep all the footguns C gives you even during compilation time!
+
 
 ## Usage
 
 ### Building
 ```bash
-cc -O2 -o ccomptime-clang ccomptime-clang.c
+cc nob.c -o nob
+./nob
 ```
 
 ### Using as compiler
-Replace `clang` with `ccomptime-clang`:
+Prepend your clang command with the `ccomptime` cli.
+Thats it, ccomptime will "highjack" the compilation process
 ```bash
-./ccomptime-clang -o program test/main.c
+./ccomptime clang -o program test/main.c
 ```
 
 ### Syntax
 
 **Compile-time execution:**
 ```c
-$comptime(printf("This runs at compile time!\n"););
+comptime {
+    printf("This runs at compile time!\n");
+}
 ```
 
 ## Example
