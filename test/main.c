@@ -177,6 +177,10 @@ int main() {
   assert(query4 == 4.0f && "query4 should be 4.0f");
   assert(query5 == 6.0 && "query5 should be 6.0");
 
+  char sum = add(char, '0', '1');
+  printf("sum is %c\n", sum);
+  assert(sum == 'a' && "adding characters??");
+
   printf("Hello! -> (result2 is %d and query2 is %d) ", result2, query2);
 
   // add(int, 1, 2);

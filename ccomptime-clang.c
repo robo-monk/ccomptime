@@ -10,6 +10,16 @@
 #define BLOCK_ID_PREFIX "CCT_STMT_$"
 #define BLOCK_FUNC_PREFIX "void " BLOCK_ID_PREFIX
 
+#define GREEN(str) "\033[0;32m" str "\033[0m"
+#define RED(str) "\033[0;31m" str "\033[0m"
+#define YELLOW(str) "\033[0;33m" str "\033[0m"
+#define GRAY(str) "\033[0;90m" str "\033[0m"
+
+#define log_info(x, ...) nob_log(INFO, GRAY(x), ##__VA_ARGS__)
+#define log_success(x, ...) nob_log(INFO, GREEN(x), ##__VA_ARGS__)
+#define log_error(x, ...) nob_log(ERROR, RED(x), ##__VA_ARGS__)
+#define log_warning(x, ...) nob_log(WARNING, YELLOW(x), ##__VA_ARGS__)
+
 static bool has_suffix(const char *s, const char *suf) {
   size_t ns = strlen(s), nf = strlen(suf);
   return ns >= nf && memcmp(s + ns - nf, suf, nf) == 0;
@@ -113,8 +123,8 @@ CliArgs CliArgs_parse(int argc, char **argv) {
       if (has_prefix(argv[i], TOOL_FLAG_PREFIX)) {
         const char *flag = argv[i] + (NOB_ARRAY_LEN(TOOL_FLAG_PREFIX) - 1);
 
-        nob_log(INFO, "Found -cct flag (%s) (%d)", flag,
-                strcmp(flag, "-keep-inter"));
+        log_info("Found -cct flag (%s) (%d)", flag,
+                 strcmp(flag, "-keep-inter"));
 
         if (strcmp(flag, "-debug") == 0) {
           parsed_argv.cct_flags |= CliComptimeFlag_Debug;
@@ -123,7 +133,8 @@ CliArgs CliArgs_parse(int argc, char **argv) {
         } else if (strcmp(flag, "-keep-inter") == 0) {
           parsed_argv.cct_flags |= CliComptimeFlag_KeepInter;
         } else {
-          nob_log(ERROR, "Unknown -comptime flag: %s", flag);
+          // nob_log(ERROR, "Unknown -comptime flag: %s", flag);
+          log_error("Unknown -comptime flag: %s", flag);
           exit(1);
         }
       } else {
@@ -134,10 +145,10 @@ CliArgs CliArgs_parse(int argc, char **argv) {
     }
 
     if (has_suffix(argv[i], ".c") || has_suffix(argv[i], ".C")) {
-      nob_log(INFO, "Detected input file: %s", argv[i]);
+      log_info("Detected input file: %s", argv[i]);
       da_append(&parsed_argv.input_files, i);
     } else {
-      nob_log(INFO, "Detected other flag: %s", argv[i]);
+      log_info("Detected other flag: %s", argv[i]);
       da_append(&parsed_argv.not_input_files, i);
     }
   }
@@ -232,7 +243,7 @@ const char *scan_balanced_brace(const char *ccode) {
 const char *parse_stringified_c_code(const char *line,
                                      Nob_String_Builder *out) {
   assert(line[0] == '"');
-  nob_log(INFO, "parsing line %s", line);
+  log_info("parsing line %s", line);
 
   const char *ptr = line + 1; // Start after the opening brace
   while (*ptr != '\0') {
@@ -253,10 +264,10 @@ void cmd_append_inputs_except(CliArgs *pa, const char *skip_input, Cmd *cmd) {
   nob_da_foreach(int, index, &pa->input_files) {
     const char *f = pa->argv[*index];
     if (strcmp(f, skip_input) == 0) {
-      nob_log(INFO, "~~ skipping %s", f);
+      log_info("~~ skipping %s", f);
       continue;
     }
-    nob_log(INFO, "~~ append input %s", f);
+    log_info("~~ append input %s", f);
     nob_cmd_append(cmd, f);
   }
 }
@@ -340,7 +351,7 @@ void compile_and_run_runner(Context *ctx) {
 
   nob_cmd_append(&cmd, ctx->runner_exepath);
 
-  nob_log(INFO, "Running runner %s", ctx->runner_exepath);
+  log_info("Running runner %s", ctx->runner_exepath);
   if (!nob_cmd_run(&cmd)) {
     nob_log(ERROR, "failed to run runner %s", ctx->runner_cpath);
     exit(1);
@@ -438,8 +449,8 @@ void emit_runner_tu(Context *ctx, CtBlocks *comptime_blocks) {
       const char *cursor = strchr(b.beg, '"');
       String_Builder inline_body = {0};
       const char *stmt_end = parse_stringified_c_code(cursor, &inline_body);
-      nob_log(INFO, "Parsed [INLINE] block: %.*s", (int)inline_body.count,
-              inline_body.items);
+      log_info("Parsed [INLINE] block: %.*s", (int)inline_body.count,
+               inline_body.items);
 
       const char *end_marker = "/*__cct_end*/";
       const char *end_marker_pos = strstr(stmt_end, end_marker);
@@ -516,8 +527,8 @@ StringBuilderArray ValsFile_read_file(const char *path) {
     if (!has_next) {
       break;
     }
-    nob_log(INFO, "vals line [%.*s] : '%.*s'", (int)label.count, label.data,
-            (int)replacement.count, replacement.data);
+    log_info("vals line [%.*s] : '%.*s'", (int)label.count, label.data,
+             (int)replacement.count, replacement.data);
 
     const char *label_str = nob_temp_sv_to_cstr(label);
 
@@ -530,7 +541,7 @@ StringBuilderArray ValsFile_read_file(const char *path) {
     while (i < replacement.count) {
       if (replacement.data[i] == '\\') {
         i++; // skip the backslash
-        nob_log(INFO, "FOUND escape %c", replacement.data[i]);
+        log_info("FOUND escape %c", replacement.data[i]);
         // da_append(&parsed_replacement, replacement.data[i++]);
         switch (replacement.data[i++]) {
         case 'n':
@@ -582,16 +593,16 @@ void substitute_block_values(Context *ctx, CtBlocks *blocks,
     // assert(b->block_index < sba.count);
     String_Builder replacement = sba.builders[b->block_index];
 
-    nob_log(INFO, "Processing block '%s' (index %zu) [%zu bytes replacement]",
-            b->block_id, b->block_index, replacement.count);
-    nob_log(INFO, "Replacement is -> %.*s", (int)replacement.count,
-            replacement.items);
+    log_info("Processing block '%s' (index %zu) [%zu bytes replacement]",
+             b->block_id, b->block_index, replacement.count);
+    log_info("Replacement is -> %.*s", (int)replacement.count,
+             replacement.items);
 
     assert(flushed_until_ptr <= b->beg);
 
     // copy everything from flushed_until_ptr to b.beg
     size_t n = (size_t)(b->beg - flushed_until_ptr);
-    nob_log(INFO, "appending %zu bytes of original source", n);
+    log_info("appending %zu bytes of original source", n);
     sb_append_buf(out, flushed_until_ptr, n);
 
     if (replacement.count > 0) {
@@ -614,10 +625,10 @@ void substitute_block_values(Context *ctx, CtBlocks *blocks,
   // copy the rest of the file
   if (flushed_until_ptr < ctx->preprocessed_source->source.items +
                               ctx->preprocessed_source->source.count) {
-    nob_log(INFO, "We have remaining source to flush (from %p to %p)",
-            flushed_until_ptr,
-            ctx->preprocessed_source->source.items +
-                ctx->preprocessed_source->source.count);
+    log_info("We have remaining source to flush (from %p to %p)",
+             flushed_until_ptr,
+             ctx->preprocessed_source->source.items +
+                 ctx->preprocessed_source->source.count);
     size_t n =
         (size_t)(ctx->preprocessed_source->source.items +
                  ctx->preprocessed_source->source.count - flushed_until_ptr);
@@ -641,7 +652,7 @@ static void run_preprocess_cmd_for_source(CliArgs *parsed_argv,
 
   static Nob_Cmd pp_cmd = {0};
 
-  nob_log(INFO, "Preprocessing %s", input_filename);
+  log_info("Preprocessing %s", input_filename);
   nob_cmd_append(&pp_cmd, Parsed_Argv_compiler_name(parsed_argv));
   nob_cmd_append(&pp_cmd, input_filename);
   cmd_append_arg_indeces(parsed_argv, &parsed_argv->not_input_files, &pp_cmd);
@@ -672,7 +683,7 @@ void scan_ct_blocks(FileBuffer *sc, CtBlocks *blocks) {
       break;
     }
     const char *cursor = beg + strlen(BLOCK_FUNC_PREFIX);
-    nob_log(INFO, "Found beg at %p %c", beg, *beg);
+    log_info("Found beg at %p %c", beg, *beg);
     // skip whitespace
     const char *stmt_name_beg = cursor;
     while (*cursor && *cursor != '(') {
@@ -681,13 +692,13 @@ void scan_ct_blocks(FileBuffer *sc, CtBlocks *blocks) {
 
     // extract name of the block
     const char *block_id = strndup(stmt_name_beg, cursor - stmt_name_beg);
-    nob_log(INFO, "Block id is '%s'", block_id);
+    log_info("Block id is '%s'", block_id);
 
     if (strcmp(block_id, "INLINE") == 0) {
       const char *end_mark = "/*__cct_end*/";
       const char *end = strstr(cursor, end_mark) + strlen(end_mark);
 
-      nob_log(INFO, "--> Found Inline block, (%zu)", end - beg);
+      log_info("--> Found Inline block, (%zu)", end - beg);
 
       CtBlock b =
           (CtBlock){.beg = beg - strlen("/*"), // we start from the /*
@@ -706,7 +717,7 @@ void scan_ct_blocks(FileBuffer *sc, CtBlocks *blocks) {
       }
 
       const char *end = scan_balanced_brace(cursor);
-      nob_log(INFO, "Block length is %zu", end - cursor);
+      log_info("Block length is %zu", end - cursor);
 
       CtBlock b = (CtBlock){.beg = beg,
                             .end = end,
@@ -727,7 +738,7 @@ void scan_ct_blocks(FileBuffer *sc, CtBlocks *blocks) {
 
   da_append(blocks, bottom_level_block);
 
-  nob_log(INFO, "found %zu blocks", blocks->count);
+  log_info("found %zu blocks", blocks->count);
 }
 
 int main(int argc, char **argv) {
@@ -741,7 +752,7 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  nob_log(INFO, "Parsing arguments");
+  log_info("Parsing arguments");
   CliArgs parsed_argv = CliArgs_parse(argc, argv);
 
   if (parsed_argv.cct_flags & CliComptimeFlag_NoLogs) {
@@ -750,8 +761,8 @@ int main(int argc, char **argv) {
     nob_minimal_log_level = INFO;
   }
 
-  nob_log(INFO, "Received %d arguments", argc);
-  nob_log(INFO, "Using compiler %s", Parsed_Argv_compiler_name(&parsed_argv));
+  log_info("Received %d arguments", argc);
+  log_info("Using compiler %s", Parsed_Argv_compiler_name(&parsed_argv));
 
   Nob_Cmd final = {0};
   nob_cmd_append(&final, Parsed_Argv_compiler_name(&parsed_argv));
@@ -775,15 +786,14 @@ int main(int argc, char **argv) {
     Context_fill_paths(&ctx, input_filename);
 
     // -- PREPROCESS INPUT FILE (expand macros) --
-    nob_log(INFO, "Processing %s source as SourceCode", input_filename);
+    log_info("Processing %s source as SourceCode", input_filename);
     parse_source_file(input_filename, ctx.raw_source);
 
-    nob_log(INFO, "Preprocessing source");
+    log_info("Preprocessing source");
     run_preprocess_cmd_for_source(&parsed_argv, input_filename,
                                   ctx.preprocessed_path);
 
-    nob_log(INFO, "Rewrote argv %s -> %s", input_filename,
-            ctx.preprocessed_path);
+    log_info("Rewrote argv %s -> %s", input_filename, ctx.preprocessed_path);
 
     parse_source_file(ctx.preprocessed_path, ctx.preprocessed_source);
 
@@ -791,7 +801,7 @@ int main(int argc, char **argv) {
     CtBlocks comptime_blocks = {0};
 
     scan_ct_blocks(ctx.preprocessed_source, &comptime_blocks);
-    nob_log(INFO, "Found %zu comptime blocks", comptime_blocks.count);
+    log_info("Found %zu comptime blocks", comptime_blocks.count);
 
     if (comptime_blocks.count == 0) {
       nob_log(WARNING, "No comptime blocks found in %s, skipping file.",
@@ -800,56 +810,57 @@ int main(int argc, char **argv) {
 
       // -- APPEND ORIGINAL UNCHANGED FILE TO ARGV --
       nob_cmd_append(&final, ctx.input_path);
-      nob_log(INFO, "Appended initial input file %s to final argv",
-              ctx.input_path);
+      log_info("Appended initial input file %s to final argv", ctx.input_path);
       continue;
     }
 
     // -- GENERATE AND RUN THE RUNNER --
-    nob_log(INFO, "Generating runner c");
+    log_info("Generating runner c");
     emit_runner_tu(&ctx, &comptime_blocks);
     compile_and_run_runner(&ctx);
 
     String_Builder repls2 = {0};
     substitute_block_values(&ctx, &comptime_blocks, &repls2);
 
-    nob_log(INFO, "WRTING FINAL OUTPUT FILE %s (%zu)bytes ", ctx.final_out_path,
-            repls2.count);
+    log_info("WRTING FINAL OUTPUT FILE %s (%zu)bytes ", ctx.final_out_path,
+             repls2.count);
     write_entire_file(ctx.final_out_path, repls2.items, repls2.count);
 
     // -- APPEND FINAL OUTPUT FILE TO ARGV --
     nob_cmd_append(&final, ctx.final_out_path);
 
-    nob_log(INFO, "Appended final output file %s to final argv",
-            ctx.final_out_path);
+    log_info("Appended final output file %s to final argv", ctx.final_out_path);
 
-    nob_log(INFO, "Scheduling intermediate files for deletion");
-    nob_log(INFO, "-> %s", ctx.preprocessed_path);
+    log_info("Scheduling intermediate files for deletion");
+    log_info("-> %s", ctx.preprocessed_path);
     da_append(&files_to_remove, ctx.preprocessed_path);
-    nob_log(INFO, "-> %s", ctx.runner_cpath);
+    log_info("-> %s", ctx.runner_cpath);
     da_append(&files_to_remove, ctx.runner_cpath);
-    nob_log(INFO, "-> %s", ctx.runner_exepath);
+    log_info("-> %s", ctx.runner_exepath);
     da_append(&files_to_remove, ctx.runner_exepath);
-    nob_log(INFO, "-> %s", ctx.vals_path);
+    log_info("-> %s", ctx.vals_path);
     da_append(&files_to_remove, ctx.vals_path);
-    nob_log(INFO, "-> %s", ctx.final_out_path);
+    log_info("-> %s", ctx.final_out_path);
     da_append(&files_to_remove, ctx.final_out_path);
   }
 
   if (!cmd_run(&final)) {
     nob_log(ERROR, "failed to compile final output");
     return 1;
+  } else {
+    log_info("success");
   }
 
   // -- CLEANUP --
+  log_info("Cleaning up %zu intermediate files", files_to_remove.count);
   nob_da_foreach(const char *, f, &files_to_remove) {
     if (!(parsed_argv.cct_flags & CliComptimeFlag_KeepInter)) {
-      nob_log(INFO, "Deleting intermediate file %s", *f);
+      log_warning("Deleting intermediate file %s", *f);
       delete_file(*f);
     } else {
-      nob_log(INFO, "Keeping intermediate file %s", *f);
+      log_info("Keeping intermediate file %s", *f);
     }
-
-    return 0;
   }
+
+  return 0;
 }
