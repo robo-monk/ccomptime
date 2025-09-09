@@ -606,17 +606,7 @@ void substitute_block_values(Context *ctx, CtBlocks *blocks,
     sb_append_buf(out, flushed_until_ptr, n);
 
     if (replacement.count > 0) {
-      // sb_appendf(
-      //     out,
-      //     "/* -- START comptime REPLACEMENT FOR BLOCK '%s' (index %zu) --
-      //     */", b->block_id, b->block_index);
-
       sb_append_buf(out, replacement.items, replacement.count);
-
-      // sb_appendf(
-      //     out,
-      //     "/* -- END comptime REPLACEMENT FOR BLOCK '%s' (index %zu) --
-      //     */", b->block_id, b->block_index);
     }
 
     flushed_until_ptr = (char *)b->end + 1;
@@ -696,7 +686,7 @@ void scan_ct_blocks(FileBuffer *sc, CtBlocks *blocks) {
 
     if (strcmp(block_id, "INLINE") == 0) {
       const char *end_mark = "/*__cct_end*/";
-      const char *end = strstr(cursor, end_mark) + strlen(end_mark);
+      const char *end = strstr(cursor, end_mark) + strlen(end_mark) - 1;
 
       log_info("--> Found Inline block, (%zu)", end - beg);
 
@@ -832,15 +822,10 @@ int main(int argc, char **argv) {
     log_info("Appended final output file %s to final argv", ctx.final_out_path);
 
     log_info("Scheduling intermediate files for deletion");
-    log_info("-> %s", ctx.preprocessed_path);
     da_append(&files_to_remove, ctx.preprocessed_path);
-    log_info("-> %s", ctx.runner_cpath);
     da_append(&files_to_remove, ctx.runner_cpath);
-    log_info("-> %s", ctx.runner_exepath);
     da_append(&files_to_remove, ctx.runner_exepath);
-    log_info("-> %s", ctx.vals_path);
     da_append(&files_to_remove, ctx.vals_path);
-    log_info("-> %s", ctx.final_out_path);
     da_append(&files_to_remove, ctx.final_out_path);
   }
 
@@ -848,7 +833,7 @@ int main(int argc, char **argv) {
     nob_log(ERROR, "failed to compile final output");
     return 1;
   } else {
-    log_info("success");
+    log_success("Successfuly compiled final output");
   }
 
   // -- CLEANUP --
