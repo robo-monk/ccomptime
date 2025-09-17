@@ -1,6 +1,13 @@
+#include <stddef.h>
+#define HASHMAP_IMPLEMENTATION
+#include "deps/hashmap/hashmap.h"
+
 #define NOB_IMPLEMENTATION
 #include "nob.h"
+
+#define TS_INCLUDE_SYMBOLS
 #include "tree_sitter_c_api.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,79 +15,444 @@
 
 // From the C grammar package:
 extern const TSLanguage *tree_sitter_c(void);
+
+TSParser *cparser;
+
+typedef struct {
+  String_View *items;
+  size_t count, capacity;
+} Strings;
+
+void strings_append(Strings *strings, String_View item) {
+  nob_da_append(strings, item);
+}
+
+Strings strings_new(size_t capacity) {
+  Strings strings = {.count = 0,
+                     .capacity = capacity,
+                     .items = malloc(sizeof(String_View) * capacity)};
+  return strings;
+}
+
+typedef struct {
+  TSNode identifier;
+  Strings arg_names;
+  // TSNode body;
+  //
+  // const char *src;
+
+  TSTree *body_tree;
+  const char *body_src;
+
+} MacroDefinition;
+
 typedef struct {
   String_Builder out_h;
   int comptime_count;
+  HashMap macros;
 } WalkContext;
+
+// #define node_len(n) (int)(ts_node_end_byte(n) - ts_node_start_byte(n))
+// #define node_start(n) src + ts_node_start_byte(n)
+
+typedef struct {
+  const char *start;
+  int len;
+} NodeRange;
+
+NodeRange ts_node_range(TSNode node, const char *src) {
+  const char *start = src + ts_node_start_byte(node);
+  int len = ts_node_end_byte(node) - ts_node_start_byte(node);
+  return (NodeRange){start, len};
+}
+
+#define ts_node_len_start_tuple(node, src)                                     \
+  ts_node_range(node, src).len, ts_node_range(node, src).start
+
+#define ts_node_start_len_tuple(node, src)                                     \
+  ts_node_range(node, src).start, ts_node_range(node, src).len
+
+void macros_put(HashMap *macros, const char *key, int key_len,
+                MacroDefinition *def) {
+  hashmap_put2(macros, (char *)key, key_len, def);
+}
+
+MacroDefinition *macros_get(HashMap *macros, const char *key, int key_len) {
+  return (MacroDefinition *)hashmap_get2(macros, (char *)key, key_len);
+}
+
+String_View ts_node_to_str_view(TSNode node, const char *src) {
+  const char *start = src + ts_node_start_byte(node);
+  int len = ts_node_end_byte(node) - ts_node_start_byte(node);
+  return (String_View){.data = start, .count = len};
+}
+
+typedef struct {
+  TSNode node;
+  String_View with;
+} Macro_Replacement;
+
+typedef struct {
+  Macro_Replacement *items;
+  size_t count, capacity;
+} Macro_Replacements;
+
+static void _expand_macro_node(TSNode node, const char *src, Strings *arg_names,
+                               Strings *arg_values,
+                               Macro_Replacements *replacements) {
+
+  switch (ts_node_symbol(node)) {
+  case sym_identifier: { // identifier
+    assert(arg_names->count == arg_values->count);
+
+    for (int i = 0; i < arg_names->count; i++) {
+      String_View arg_name = arg_names->items[i];
+
+      if (ts_node_range(node, src).len != arg_name.count)
+        continue;
+
+      assert(src && "src should be non null");
+      // printf("node_len(node): %d, node_len(arg_node): %d [ASSESSING:
+      // %.*s]\n",
+      //        node_len(node), node_len(arg_node), node_len(arg_node),
+      //        node_start(arg_node));
+
+      if (memcmp(ts_node_range(node, src).start, arg_name.data,
+                 arg_name.count) == 0) {
+
+        String_View arg_value = arg_values->items[i];
+        printf("~> Replacing (arg:%d) '%.*s' with: %.*s\n", i,
+               (int)arg_name.count, arg_name.data, (int)arg_value.count,
+               arg_value.data);
+
+        Macro_Replacement repl = {.node = node, .with = arg_value};
+        nob_da_append(replacements, repl);
+
+      } else {
+        printf("~> Not replacing identifier '%.*s'\n",
+               ts_node_len_start_tuple(node, src));
+      }
+    }
+    break;
+  }
+  }
+
+  uint32_t n = ts_node_child_count(node);
+  for (uint32_t i = 0; i < n; i++) {
+    _expand_macro_node(ts_node_child(node, i), src, arg_names, arg_values,
+                       replacements);
+  }
+}
+
+static void expand_macro_tree(MacroDefinition *macro_def, Strings arg_values,
+                              String_Builder *out_sb) {
+
+  assert(macro_def != NULL);
+  assert(macro_def->arg_names.count == arg_values.count);
+  nob_log(INFO, "Expand macro tree with %zu args", arg_values.count);
+  TSNode root = ts_tree_root_node(macro_def->body_tree);
+  NodeRange root_range = ts_node_range(root, macro_def->body_src);
+
+  Macro_Replacements replacements = {0};
+  _expand_macro_node(root, macro_def->body_src, &macro_def->arg_names,
+                     &arg_values, &replacements);
+
+  nob_log(INFO, "Macro expansion replacements: %zu", replacements.count);
+
+  assert(root_range.start == macro_def->body_src);
+
+  char *cursor = (char *)macro_def->body_src;
+  nob_da_foreach(Macro_Replacement, it, &replacements) {
+    NodeRange r = ts_node_range(it->node, macro_def->body_src);
+    assert(r.start >= cursor);
+
+    // copy everything from cursor to r.start to out
+    nob_sb_append_buf(out_sb, cursor, r.start - cursor);
+    // copy the replacement
+    nob_sb_append_buf(out_sb, it->with.data, (it->with.count));
+    // set cursor to end of the range
+    cursor = (char *)r.start + r.len;
+  }
+  // flush remaining
+  nob_sb_append_buf(out_sb, cursor, root_range.start + root_range.len - cursor);
+
+  nob_log(INFO, "Macro expansion result: %.*s", (int)out_sb->count,
+          out_sb->items);
+}
+
+static bool ts_node_is_comptime_kw(TSNode node, const char *src) {
+  assert(ts_node_symbol(node) == sym_identifier);
+  return strlen("comptime") == ts_node_range(node, src).len &&
+         memcmp(ts_node_range(node, src).start, "comptime",
+                ts_node_range(node, src).len) == 0;
+}
+
+static bool _has_comptime_identifier(TSNode node, const char *src) {
+  if (ts_node_symbol(node) == sym_identifier) {
+    return ts_node_is_comptime_kw(node, src);
+  }
+
+  uint32_t n = ts_node_child_count(node);
+  for (uint32_t i = 0; i < n; i++) {
+    if (_has_comptime_identifier(ts_node_child(node, i), src)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool has_comptime_identifier(TSTree *tree, const char *src) {
+  assert(tree != NULL);
+  return _has_comptime_identifier(ts_tree_root_node(tree), src);
+}
+
+// static void debug_tree
+static void debug_tree_node(TSNode node, const char *src, int depth) {
+
+  for (unsigned i = 0; i < depth; i++)
+    putchar(' ');
+
+  printf("- [%s] (%d)", ts_node_type(node), ts_node_symbol(node));
+
+  printf("  // %.*s", ts_node_range(node, src).len,
+         ts_node_range(node, src).start);
+
+  putchar('\n');
+
+  uint32_t n = ts_node_child_count(node);
+  for (uint32_t i = 0; i < n; i++) {
+    debug_tree_node(ts_node_child(node, i), src, depth + 2);
+  }
+}
+
+static void debug_tree(TSTree *tree, const char *src, int depth) {
+  TSNode root = ts_tree_root_node(tree);
+  debug_tree_node(root, src, depth);
+}
 
 typedef struct {
   bool is_inside_function_body;
   bool is_assigning_to_var;
-  bool is_within_preproc_def;
+  TSNode *preproc_def_root;
+  TSNode *call_expression_root;
+  // TSNode *preproc_func_def_root;
   bool is_within_compound;
-} VisitFlags;
-
-static void walk(WalkContext *const ctx, VisitFlags visit_flags, TSNode node,
+  int child_idx;
+} LocalContext;
+static void walk(WalkContext *const ctx, LocalContext local, TSNode node,
                  const char *src, unsigned depth) {
+
   for (unsigned i = 0; i < depth; i++)
     putchar(' ');
   printf("- [%s] (%d)", ts_node_type(node), ts_node_symbol(node));
 
   TSSymbol sym = ts_node_symbol(node);
   switch (sym) {
-  case 1: // identifier
+  case sym_identifier: { // identifier
+
+    const char *key = ts_node_range(node, src).start;
+    int key_len = ts_node_range(node, src).len;
+
+    MacroDefinition *macro_def = macros_get(&ctx->macros, key, key_len);
+    if (macro_def) {
+      if (macro_def->arg_names.count > 0) {
+        // macro call with arguments, we must be inside a call expression
+        assert(
+            local.call_expression_root &&
+            "macro call with args must be inside a `call expression`"
+            "(you might be calling the macro correctly but we are not "
+            "supporting stuff like this: macro(bing bong bing) <- "
+            "technically correct but the parser gets confused. the arguments "
+            "should look like a real function call for now. sorry.)");
+
+        TSNode argument_list = ts_node_child(*local.call_expression_root, 1);
+        assert(ts_node_symbol(argument_list) == 309 /* argument_list */);
+
+        // print body of the macro
+        // printf("  [MACRO CALL: %.*s] BODY: %.*s", key_len, key,
+        //        (int)(ts_node_end_byte(macro->body) -
+        //              ts_node_start_byte(macro->body)),
+        //        src + ts_node_start_byte(macro->body));
+
+        // ts_parser_parse_string(macro->body
+
+        Strings arg_values = strings_new(ts_node_child_count(argument_list));
+
+        for (int i = 0; i < ts_node_child_count(argument_list); i++) {
+          TSNode arg = ts_node_child(argument_list, i);
+          TSSymbol arg_sym = ts_node_symbol(arg);
+
+          if (arg_sym == 5    /* ( */
+              || arg_sym == 7 /* , */
+              || arg_sym == 8 /* ) */
+          )
+            continue;
+
+          uint32_t start = ts_node_start_byte(arg);
+          uint32_t end = ts_node_end_byte(arg);
+          printf("\n ----> Arg %d: %.*s\n", i, (int)(end - start), src + start);
+
+          strings_append(&arg_values, (String_View){.count = end - start,
+                                                    .data = src + start});
+
+          // Expand the argument node
+        }
+
+        Nob_String_Builder out_sb = {0};
+        expand_macro_tree(macro_def, arg_values, &out_sb);
+
+        // assert(local.call_expression_root)
+      } else {
+        printf("  [MACRO CALL: %.*s]", key_len, key);
+      }
+      printf("\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!MACRO %.*s [%zu]\n", key_len, key,
+             macro_def->arg_names.count);
+      return;
+    }
     break;
-  case 196: // function_definition
-    visit_flags.is_inside_function_body = true;
+  }
+
+  case sym_function_definition: // function_definition
+    local.is_inside_function_body = true;
     break;
-  case 240: // init_declarator
-    visit_flags.is_assigning_to_var = true;
+  case sym_init_declarator: // init_declarator
+    local.is_assigning_to_var = true;
     break;
   case 165: // preproc_def
-    visit_flags.is_within_preproc_def = true;
+    local.preproc_def_root = &node;
     break;
+
+  case 299: /* call exresssion */
+    local.call_expression_root = &node;
+    break;
+  case sym_preproc_function_def: {
+
+    // MacroDefinition macro = {0};
+    MacroDefinition *macro = calloc(1, sizeof(MacroDefinition));
+    // macro->src = src;
+
+    uint32_t n = ts_node_child_count(node);
+    assert(ts_node_symbol(ts_node_child(node, 0)) ==
+           aux_sym_preproc_def_token1 /* #define */);
+
+    macro->identifier = ts_node_child(node, 1); // should be identifier
+    assert(ts_node_symbol(macro->identifier) == sym_identifier);
+
+    TSNode preproc_params = ts_node_child(node, 2); // should be preproc_params
+    assert(ts_node_symbol(preproc_params) == sym_preproc_params);
+
+    uint32_t param_count = ts_node_child_count(preproc_params);
+    for (int i = 0; i < param_count; i++) {
+      TSNode param = ts_node_child(preproc_params, i);
+      if (ts_node_symbol(param) != sym_identifier)
+        continue; // commas and stuff
+
+      assert(ts_node_symbol(param) == sym_identifier);
+      uint32_t start = ts_node_start_byte(param);
+      uint32_t end = ts_node_end_byte(param);
+      printf("Param %d: %.*s\n", i, (int)(end - start), src + start);
+
+      nob_da_append(&macro->arg_names, ts_node_to_str_view(param, src));
+    }
+    printf("got in total of %zu args\n", macro->arg_names.count);
+
+    TSNode body = ts_node_child(node, 3); // should be the body
+    assert(ts_node_symbol(body) == sym_preproc_arg /* preproc_arg */);
+
+    // we only care if it includes a `comptime`, otherwise skip expansion
+    TSTree *tree = ts_parser_parse_string(cparser, NULL,
+                                          ts_node_start_len_tuple(body, src));
+
+    if (!has_comptime_identifier(tree, ts_node_range(body, src).start)) {
+      nob_log(INFO,
+              "'%.*s' macro has been proven irrelevant because it does not "
+              "contain the `comptime` keyword",
+              ts_node_len_start_tuple(macro->identifier, src));
+    } else {
+      nob_log(INFO, "'%.*s' macro is a *comptime* macro ",
+              ts_node_len_start_tuple(macro->identifier, src));
+    }
+
+    macro->body_tree = tree;
+    macro->body_src = ts_node_range(body, src).start;
+
+    printf("\n---- MACRO DEF SUB TREE ----\n");
+    debug_tree(tree, ts_node_range(body, src).start, 4);
+    printf("\n^^^^^^^ MACRO DEF SUB TREE ----\n");
+
+    const char *key = src + ts_node_start_byte(macro->identifier);
+    int key_len = (int)(ts_node_end_byte(macro->identifier) -
+                        ts_node_start_byte(macro->identifier));
+
+    macros_put(&ctx->macros, key, key_len, macro);
+    return;
+  }
+
     // return;
   case 241: // compound_statement
-    visit_flags.is_within_compound = true;
+    local.is_within_compound = true;
     break;
   }
 
   // switch (ts_node_symbol(node)) {
   // case
   // }
-  if (visit_flags.is_assigning_to_var) {
+  if (local.is_assigning_to_var) {
     printf(" [VAR] ");
   }
 
-  if (visit_flags.is_inside_function_body) {
+  if (local.is_inside_function_body) {
     printf(" [FN]");
   }
 
-  if (visit_flags.is_within_compound) {
+  if (local.is_within_compound) {
     printf("  [{}]");
   }
 
-  if (visit_flags.is_within_preproc_def) {
-    printf("  [#define]");
+  // if (local.preproc_def_root) {
+  //   printf("  [#define]");
+  // }
+
+  if (sym == 18 /* preproc arg */) {
+    // assert(0);
+    // assert(local.preproc_def_root || local.preproc_func_def_root);
+    // uint32_t start = ts_node_start_byte(node);
+    // uint32_t end = ts_node_end_byte(node);
+
+    // if (local.preproc_func_def_root) {
+    //     (MacroDefinition) {
+    //         .args = {0},
+    //         .body = node,
+    //         .identifier =
+    //     }
+    // }
+
+    // printf("#### %.*s", (int)(end - start), src + start);
   }
 
   // Print token text for identifiers (best-effort)
-  if (sym == 1 /* identifier */) {
-    uint32_t start = ts_node_start_byte(node);
-    uint32_t end = ts_node_end_byte(node);
-    printf("  : %.*s", (int)(end - start), src + start);
-    if (memmem(src + start, end - start, "comptime", strlen("comptime"))) {
+  if (sym == sym_identifier) {
+    if (ts_node_is_comptime_kw(node, src)) {
       printf("  [contains 'comptime'] (%d)", ctx->comptime_count);
-      if (visit_flags.is_within_preproc_def) {
+      if (local.preproc_def_root) {
+        if (local.child_idx == 1) {
+          // after #define
+          printf("\n---\nRedefining `comptime` macro is not supported\n");
+          exit(1);
+        }
+
         printf("\n  [SKIP - within #define]\n");
+
         // TODO: now we should preprocess this identifier and replace future
         printf("  [FOUND COMPTIME POWERED MACRO]");
-        return;
+        exit(1);
+        // return;
       }
-      if (visit_flags.is_assigning_to_var) {
+
+      if (local.is_assigning_to_var) {
         nob_sb_appendf(&ctx->out_h, "#define _cct_%d 1 ? 0 :\n",
                        ctx->comptime_count);
-      } else if (visit_flags.is_inside_function_body) {
+      } else if (local.is_inside_function_body) {
         nob_sb_appendf(&ctx->out_h, "#define _cct_%d while (0)\n",
                        ctx->comptime_count);
       } else {
@@ -94,7 +466,8 @@ static void walk(WalkContext *const ctx, VisitFlags visit_flags, TSNode node,
 
   uint32_t n = ts_node_child_count(node);
   for (uint32_t i = 0; i < n; i++) {
-    walk(ctx, visit_flags, ts_node_child(node, i), src, depth + 2);
+    local.child_idx = i;
+    walk(ctx, local, ts_node_child(node, i), src, depth + 2);
   }
 }
 
@@ -113,32 +486,30 @@ int main(int argc, char **argv) {
     return 2;
   }
 
-  TSParser *parser = ts_parser_new();
-  ts_parser_set_language(parser, tree_sitter_c());
-  TSTree *tree = ts_parser_parse_string(parser, NULL, src.items, src.count);
+  cparser = ts_parser_new();
+  ts_parser_set_language(cparser, tree_sitter_c());
+
+  TSTree *tree = ts_parser_parse_string(cparser, NULL, src.items, src.count);
 
   TSNode root = ts_tree_root_node(tree);
   WalkContext walk_ctx = (WalkContext){0};
   sb_appendf(&walk_ctx.out_h,
-             "/*// @generated - ccomptime™ v0.0.1 - %lu \\*/\n",
-             // "/* ---- */// the end. ///* ---- */"
-             // "/*      */// @generated ///*       */\n"
-             // "/*       - ccomptime™ v0.0.1       */\n"
-             // "/*                1758074492       */\n"
-             // "/*                %lu       */\n",
-             time(NULL));
+             "/*// @generated - ccomptime™ v0.0.1 - %lu \\*/\n", time(NULL));
   sb_appendf(&walk_ctx.out_h, "#define _CONCAT_(x, y) x##y\n"
                               "#define CONCAT(x, y) _CONCAT_(x, y)\n"
                               "#define comptime CONCAT(_cct_, __COUNTER__)\n");
 
-  walk(&walk_ctx, (VisitFlags){0}, root, src.items, 0);
+  walk(&walk_ctx, (LocalContext){0}, root, src.items, 0);
   sb_appendf(&walk_ctx.out_h, "/* ---- */// the end. ///* ---- */\n");
   printf("comptime found : %d", walk_ctx.comptime_count);
 
   printf("\n\nGenerated header:\n%s\n", walk_ctx.out_h.items);
 
+  write_entire_file("./test-syntax.h", walk_ctx.out_h.items,
+                    walk_ctx.out_h.count);
+
   ts_tree_delete(tree);
-  ts_parser_delete(parser);
+  ts_parser_delete(cparser);
   sb_free(src);
   sb_free(walk_ctx.out_h);
   return 0;

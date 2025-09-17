@@ -7,9 +7,9 @@
 #endif
 #endif
 
-#include <stdlib.h>
-#include <stdint.h>
 #include <stdbool.h>
+#include <stdint.h>
+#include <stdlib.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -51,11 +51,8 @@ typedef struct TSLookaheadIterator TSLookaheadIterator;
 // This function signature reads one code point from the given string,
 // returning the number of bytes consumed. It should write the code point
 // to the `code_point` pointer, or write -1 if the input is invalid.
-typedef uint32_t (*TSDecodeFunction)(
-  const uint8_t *string,
-  uint32_t length,
-  int32_t *code_point
-);
+typedef uint32_t (*TSDecodeFunction)(const uint8_t *string, uint32_t length,
+                                     int32_t *code_point);
 
 // Deprecated alias to be removed in ABI 16
 typedef TSDecodeFunction DecodeFunction;
@@ -88,7 +85,8 @@ typedef struct TSRange {
 
 typedef struct TSInput {
   void *payload;
-  const char *(*read)(void *payload, uint32_t byte_index, TSPoint position, uint32_t *bytes_read);
+  const char *(*read)(void *payload, uint32_t byte_index, TSPoint position,
+                      uint32_t *bytes_read);
   TSInputEncoding encoding;
   TSDecodeFunction decode;
 } TSInput;
@@ -189,10 +187,11 @@ typedef struct TSQueryCursorOptions {
 /**
  * The metadata associated with a language.
  *
- * Currently, this metadata can be used to check the [Semantic Version](https://semver.org/)
- * of the language. This version information should be used to signal if a given parser might
- * be incompatible with existing queries when upgrading between major versions, or minor versions
- * if it's in zerover.
+ * Currently, this metadata can be used to check the [Semantic
+ * Version](https://semver.org/) of the language. This version information
+ * should be used to signal if a given parser might be incompatible with
+ * existing queries when upgrading between major versions, or minor versions if
+ * it's in zerover.
  */
 typedef struct TSLanguageMetadata {
   uint8_t major_version;
@@ -225,8 +224,9 @@ const TSLanguage *ts_parser_language(const TSParser *self);
  * Returns a boolean indicating whether or not the language was successfully
  * assigned. True means assignment succeeded. False means there was a version
  * mismatch: the language was generated with an incompatible version of the
- * Tree-sitter CLI. Check the language's ABI version using [`ts_language_abi_version`]
- * and compare it to this library's [`TREE_SITTER_LANGUAGE_VERSION`] and
+ * Tree-sitter CLI. Check the language's ABI version using
+ * [`ts_language_abi_version`] and compare it to this library's
+ * [`TREE_SITTER_LANGUAGE_VERSION`] and
  * [`TREE_SITTER_MIN_COMPATIBLE_LANGUAGE_VERSION`] constants.
  */
 bool ts_parser_set_language(TSParser *self, const TSLanguage *language);
@@ -253,11 +253,8 @@ bool ts_parser_set_language(TSParser *self, const TSLanguage *language);
  * will not be assigned, and this function will return `false`. On success,
  * this function returns `true`
  */
-bool ts_parser_set_included_ranges(
-  TSParser *self,
-  const TSRange *ranges,
-  uint32_t count
-);
+bool ts_parser_set_included_ranges(TSParser *self, const TSRange *ranges,
+                                   uint32_t count);
 
 /**
  * Get the ranges of text that the parser will include when parsing.
@@ -266,10 +263,7 @@ bool ts_parser_set_included_ranges(
  * or write to it. The length of the array will be written to the given
  * `count` pointer.
  */
-const TSRange *ts_parser_included_ranges(
-  const TSParser *self,
-  uint32_t *count
-);
+const TSRange *ts_parser_included_ranges(const TSParser *self, uint32_t *count);
 
 /**
  * Use the parser to parse some source code and create a syntax tree.
@@ -299,33 +293,29 @@ const TSRange *ts_parser_included_ranges(
  * are four possible reasons for failure:
  * 1. The parser does not have a language assigned. Check for this using the
       [`ts_parser_language`] function.
- * 2. Parsing was cancelled due to the progress callback returning true. This callback
- *    is passed in [`ts_parser_parse_with_options`] inside the [`TSParseOptions`] struct.
+ * 2. Parsing was cancelled due to the progress callback returning true. This
+ callback
+ *    is passed in [`ts_parser_parse_with_options`] inside the
+ [`TSParseOptions`] struct.
  *
  * [`read`]: TSInput::read
  * [`payload`]: TSInput::payload
  * [`encoding`]: TSInput::encoding
  * [`bytes_read`]: TSInput::read
  */
-TSTree *ts_parser_parse(
-  TSParser *self,
-  const TSTree *old_tree,
-  TSInput input
-);
+TSTree *ts_parser_parse(TSParser *self, const TSTree *old_tree, TSInput input);
 
 /**
- * Use the parser to parse some source code and create a syntax tree, with some options.
+ * Use the parser to parse some source code and create a syntax tree, with some
+ * options.
  *
  * See [`ts_parser_parse`] for more details.
  *
  * See [`TSParseOptions`] for more details on the options.
  */
-TSTree* ts_parser_parse_with_options(
-  TSParser *self,
-  const TSTree *old_tree,
-  TSInput input,
-  TSParseOptions parse_options
-);
+TSTree *ts_parser_parse_with_options(TSParser *self, const TSTree *old_tree,
+                                     TSInput input,
+                                     TSParseOptions parse_options);
 
 /**
  * Use the parser to parse some source code stored in one contiguous buffer.
@@ -333,26 +323,18 @@ TSTree* ts_parser_parse_with_options(
  * above. The second two parameters indicate the location of the buffer and its
  * length in bytes.
  */
-TSTree *ts_parser_parse_string(
-  TSParser *self,
-  const TSTree *old_tree,
-  const char *string,
-  uint32_t length
-);
+TSTree *ts_parser_parse_string(TSParser *self, const TSTree *old_tree,
+                               const char *string, uint32_t length);
 
 /**
  * Use the parser to parse some source code stored in one contiguous buffer with
  * a given encoding. The first four parameters work the same as in the
- * [`ts_parser_parse_string`] method above. The final parameter indicates whether
- * the text is encoded as UTF8 or UTF16.
+ * [`ts_parser_parse_string`] method above. The final parameter indicates
+ * whether the text is encoded as UTF8 or UTF16.
  */
-TSTree *ts_parser_parse_string_encoding(
-  TSParser *self,
-  const TSTree *old_tree,
-  const char *string,
-  uint32_t length,
-  TSInputEncoding encoding
-);
+TSTree *ts_parser_parse_string_encoding(TSParser *self, const TSTree *old_tree,
+                                        const char *string, uint32_t length,
+                                        TSInputEncoding encoding);
 
 /**
  * Instruct the parser to start the next parse from the beginning.
@@ -413,11 +395,8 @@ TSNode ts_tree_root_node(const TSTree *self);
  * Get the root node of the syntax tree, but with its position
  * shifted forward by the given offset.
  */
-TSNode ts_tree_root_node_with_offset(
-  const TSTree *self,
-  uint32_t offset_bytes,
-  TSPoint offset_extent
-);
+TSNode ts_tree_root_node_with_offset(const TSTree *self, uint32_t offset_bytes,
+                                     TSPoint offset_extent);
 
 /**
  * Get the language that was used to parse the syntax tree.
@@ -451,21 +430,18 @@ void ts_tree_edit(TSTree *self, const TSInputEdit *edit);
  * tree that was returned from that function.
  *
  * The returned ranges indicate areas where the hierarchical structure of syntax
- * nodes (from root to leaf) has changed between the old and new trees. Characters
- * outside these ranges have identical ancestor nodes in both trees.
+ * nodes (from root to leaf) has changed between the old and new trees.
+ * Characters outside these ranges have identical ancestor nodes in both trees.
  *
- * Note that the returned ranges may be slightly larger than the exact changed areas,
- * but Tree-sitter attempts to make them as small as possible.
+ * Note that the returned ranges may be slightly larger than the exact changed
+ * areas, but Tree-sitter attempts to make them as small as possible.
  *
  * The returned array is allocated using `malloc` and the caller is responsible
  * for freeing it using `free`. The length of the array will be written to the
  * given `length` pointer.
  */
-TSRange *ts_tree_get_changed_ranges(
-  const TSTree *old_tree,
-  const TSTree *new_tree,
-  uint32_t *length
-);
+TSRange *ts_tree_get_changed_ranges(const TSTree *old_tree,
+                                    const TSTree *new_tree, uint32_t *length);
 
 /**
  * Write a DOT graph describing the syntax tree to the given file.
@@ -534,8 +510,8 @@ char *ts_node_string(TSNode self);
 
 /**
  * Check if the node is null. Functions like [`ts_node_child`] and
- * [`ts_node_next_sibling`] will return a null node to indicate that no such node
- * was found.
+ * [`ts_node_next_sibling`] will return a null node to indicate that no such
+ * node was found.
  */
 bool ts_node_is_null(TSNode self);
 
@@ -570,17 +546,17 @@ bool ts_node_has_error(TSNode self);
 
 /**
  * Check if the node is a syntax error.
-*/
+ */
 bool ts_node_is_error(TSNode self);
 
 /**
  * Get this node's parse state.
-*/
+ */
 TSStateId ts_node_parse_state(TSNode self);
 
 /**
  * Get the parse state after this node.
-*/
+ */
 TSStateId ts_node_next_parse_state(TSNode self);
 
 /**
@@ -613,7 +589,8 @@ const char *ts_node_field_name_for_child(TSNode self, uint32_t child_index);
  * Get the field name for node's named child at the given index, where zero
  * represents the first named child. Returns NULL, if no field is found.
  */
-const char *ts_node_field_name_for_named_child(TSNode self, uint32_t named_child_index);
+const char *ts_node_field_name_for_named_child(TSNode self,
+                                               uint32_t named_child_index);
 
 /**
  * Get the node's number of children.
@@ -637,11 +614,8 @@ uint32_t ts_node_named_child_count(TSNode self);
 /**
  * Get the node's child with the given field name.
  */
-TSNode ts_node_child_by_field_name(
-  TSNode self,
-  const char *name,
-  uint32_t name_length
-);
+TSNode ts_node_child_by_field_name(TSNode self, const char *name,
+                                   uint32_t name_length);
 
 /**
  * Get the node's child with the given numerical field id.
@@ -664,12 +638,14 @@ TSNode ts_node_next_named_sibling(TSNode self);
 TSNode ts_node_prev_named_sibling(TSNode self);
 
 /**
- * Get the node's first child that contains or starts after the given byte offset.
+ * Get the node's first child that contains or starts after the given byte
+ * offset.
  */
 TSNode ts_node_first_child_for_byte(TSNode self, uint32_t byte);
 
 /**
- * Get the node's first named child that contains or starts after the given byte offset.
+ * Get the node's first named child that contains or starts after the given byte
+ * offset.
  */
 TSNode ts_node_first_named_child_for_byte(TSNode self, uint32_t byte);
 
@@ -682,24 +658,28 @@ uint32_t ts_node_descendant_count(TSNode self);
  * Get the smallest node within this node that spans the given range of bytes
  * or (row, column) positions.
  */
-TSNode ts_node_descendant_for_byte_range(TSNode self, uint32_t start, uint32_t end);
-TSNode ts_node_descendant_for_point_range(TSNode self, TSPoint start, TSPoint end);
+TSNode ts_node_descendant_for_byte_range(TSNode self, uint32_t start,
+                                         uint32_t end);
+TSNode ts_node_descendant_for_point_range(TSNode self, TSPoint start,
+                                          TSPoint end);
 
 /**
  * Get the smallest named node within this node that spans the given range of
  * bytes or (row, column) positions.
  */
-TSNode ts_node_named_descendant_for_byte_range(TSNode self, uint32_t start, uint32_t end);
-TSNode ts_node_named_descendant_for_point_range(TSNode self, TSPoint start, TSPoint end);
+TSNode ts_node_named_descendant_for_byte_range(TSNode self, uint32_t start,
+                                               uint32_t end);
+TSNode ts_node_named_descendant_for_point_range(TSNode self, TSPoint start,
+                                                TSPoint end);
 
 /**
  * Edit the node to keep it in-sync with source code that has been edited.
  *
  * This function is only rarely needed. When you edit a syntax tree with the
  * [`ts_tree_edit`] function, all of the nodes that you retrieve from the tree
- * afterward will already reflect the edit. You only need to use [`ts_node_edit`]
- * when you have a [`TSNode`] instance that you want to keep and continue to use
- * after an edit.
+ * afterward will already reflect the edit. You only need to use
+ * [`ts_node_edit`] when you have a [`TSNode`] instance that you want to keep
+ * and continue to use after an edit.
  */
 void ts_node_edit(TSNode *self, const TSInputEdit *edit);
 
@@ -716,8 +696,9 @@ bool ts_node_eq(TSNode self, TSNode other);
  * Create a new tree cursor starting from the given node.
  *
  * A tree cursor allows you to walk a syntax tree more efficiently than is
- * possible using the [`TSNode`] functions. It is a mutable object that is always
- * on a certain syntax node, and can be moved imperatively to different nodes.
+ * possible using the [`TSNode`] functions. It is a mutable object that is
+ * always on a certain syntax node, and can be moved imperatively to different
+ * nodes.
  *
  * Note that the given node is considered the root of the cursor,
  * and the cursor cannot walk outside this node.
@@ -740,7 +721,7 @@ void ts_tree_cursor_reset(TSTreeCursor *self, TSNode node);
  *
  * Unlike [`ts_tree_cursor_reset`], this will not lose parent information and
  * allows reusing already created cursors.
-*/
+ */
 void ts_tree_cursor_reset_to(TSTreeCursor *dst, const TSTreeCursor *src);
 
 /**
@@ -795,9 +776,9 @@ bool ts_tree_cursor_goto_next_sibling(TSTreeCursor *self);
  * Note, that this function may be slower than
  * [`ts_tree_cursor_goto_next_sibling`] due to how node positions are stored. In
  * the worst case, this will need to iterate through all the children up to the
- * previous sibling node to recalculate its position. Also note that the node the cursor
- * was constructed with is considered the root of the cursor, and the cursor cannot
- * walk outside this node.
+ * previous sibling node to recalculate its position. Also note that the node
+ * the cursor was constructed with is considered the root of the cursor, and the
+ * cursor cannot walk outside this node.
  */
 bool ts_tree_cursor_goto_previous_sibling(TSTreeCursor *self);
 
@@ -815,9 +796,9 @@ bool ts_tree_cursor_goto_first_child(TSTreeCursor *self);
  * This returns `true` if the cursor successfully moved, and returns `false` if
  * there were no children.
  *
- * Note that this function may be slower than [`ts_tree_cursor_goto_first_child`]
- * because it needs to iterate through all the children to compute the child's
- * position.
+ * Note that this function may be slower than
+ * [`ts_tree_cursor_goto_first_child`] because it needs to iterate through all
+ * the children to compute the child's position.
  */
 bool ts_tree_cursor_goto_last_child(TSTreeCursor *self);
 
@@ -826,7 +807,8 @@ bool ts_tree_cursor_goto_last_child(TSTreeCursor *self);
  * the original node that the cursor was constructed with, where
  * zero represents the original node itself.
  */
-void ts_tree_cursor_goto_descendant(TSTreeCursor *self, uint32_t goal_descendant_index);
+void ts_tree_cursor_goto_descendant(TSTreeCursor *self,
+                                    uint32_t goal_descendant_index);
 
 /**
  * Get the index of the cursor's current node out of all of the
@@ -841,14 +823,16 @@ uint32_t ts_tree_cursor_current_descendant_index(const TSTreeCursor *self);
 uint32_t ts_tree_cursor_current_depth(const TSTreeCursor *self);
 
 /**
- * Move the cursor to the first child of its current node that contains or starts after
- * the given byte offset or point.
+ * Move the cursor to the first child of its current node that contains or
+ * starts after the given byte offset or point.
  *
  * This returns the index of the child node if one was found, and returns -1
  * if no such child was found.
  */
-int64_t ts_tree_cursor_goto_first_child_for_byte(TSTreeCursor *self, uint32_t goal_byte);
-int64_t ts_tree_cursor_goto_first_child_for_point(TSTreeCursor *self, TSPoint goal_point);
+int64_t ts_tree_cursor_goto_first_child_for_byte(TSTreeCursor *self,
+                                                 uint32_t goal_byte);
+int64_t ts_tree_cursor_goto_first_child_for_point(TSTreeCursor *self,
+                                                  TSPoint goal_point);
 
 TSTreeCursor ts_tree_cursor_copy(const TSTreeCursor *cursor);
 
@@ -867,13 +851,9 @@ TSTreeCursor ts_tree_cursor_copy(const TSTreeCursor *cursor);
  * 1. The byte offset of the error is written to the `error_offset` parameter.
  * 2. The type of error is written to the `error_type` parameter.
  */
-TSQuery *ts_query_new(
-  const TSLanguage *language,
-  const char *source,
-  uint32_t source_len,
-  uint32_t *error_offset,
-  TSQueryError *error_type
-);
+TSQuery *ts_query_new(const TSLanguage *language, const char *source,
+                      uint32_t source_len, uint32_t *error_offset,
+                      TSQueryError *error_type);
 
 /**
  * Delete a query, freeing all of the memory that it used.
@@ -893,7 +873,8 @@ uint32_t ts_query_string_count(const TSQuery *self);
  * This can be useful when combining queries by concatenating their source
  * code strings.
  */
-uint32_t ts_query_start_byte_for_pattern(const TSQuery *self, uint32_t pattern_index);
+uint32_t ts_query_start_byte_for_pattern(const TSQuery *self,
+                                         uint32_t pattern_index);
 
 /**
  * Get the byte offset where the given pattern ends in the query's source.
@@ -901,7 +882,8 @@ uint32_t ts_query_start_byte_for_pattern(const TSQuery *self, uint32_t pattern_i
  * This can be useful when combining queries by concatenating their source
  * code strings.
  */
-uint32_t ts_query_end_byte_for_pattern(const TSQuery *self, uint32_t pattern_index);
+uint32_t ts_query_end_byte_for_pattern(const TSQuery *self,
+                                       uint32_t pattern_index);
 
 /**
  * Get all of the predicates for the given pattern in the query.
@@ -911,7 +893,8 @@ uint32_t ts_query_end_byte_for_pattern(const TSQuery *self, uint32_t pattern_ind
  * the `type` field:
  * - `TSQueryPredicateStepTypeCapture` - Steps with this type represent names
  *    of captures. Their `value_id` can be used with the
- *   [`ts_query_capture_name_for_id`] function to obtain the name of the capture.
+ *   [`ts_query_capture_name_for_id`] function to obtain the name of the
+ * capture.
  * - `TSQueryPredicateStepTypeString` - Steps with this type represent literal
  *    strings. Their `value_id` can be used with the
  *    [`ts_query_string_value_for_id`] function to obtain their string value.
@@ -919,11 +902,9 @@ uint32_t ts_query_end_byte_for_pattern(const TSQuery *self, uint32_t pattern_ind
  *    that represent the end of an individual predicate. If a pattern has two
  *    predicates, then there will be two steps with this `type` in the array.
  */
-const TSQueryPredicateStep *ts_query_predicates_for_pattern(
-  const TSQuery *self,
-  uint32_t pattern_index,
-  uint32_t *step_count
-);
+const TSQueryPredicateStep *
+ts_query_predicates_for_pattern(const TSQuery *self, uint32_t pattern_index,
+                                uint32_t *step_count);
 
 /*
  * Check if the given pattern in the query has a single root node.
@@ -944,34 +925,27 @@ bool ts_query_is_pattern_non_local(const TSQuery *self, uint32_t pattern_index);
  * Check if a given pattern is guaranteed to match once a given step is reached.
  * The step is specified by its byte offset in the query's source code.
  */
-bool ts_query_is_pattern_guaranteed_at_step(const TSQuery *self, uint32_t byte_offset);
+bool ts_query_is_pattern_guaranteed_at_step(const TSQuery *self,
+                                            uint32_t byte_offset);
 
 /**
  * Get the name and length of one of the query's captures, or one of the
  * query's string literals. Each capture and string is associated with a
  * numeric id based on the order that it appeared in the query's source.
  */
-const char *ts_query_capture_name_for_id(
-  const TSQuery *self,
-  uint32_t index,
-  uint32_t *length
-);
+const char *ts_query_capture_name_for_id(const TSQuery *self, uint32_t index,
+                                         uint32_t *length);
 
 /**
  * Get the quantifier of the query's captures. Each capture is * associated
  * with a numeric id based on the order that it appeared in the query's source.
  */
-TSQuantifier ts_query_capture_quantifier_for_id(
-  const TSQuery *self,
-  uint32_t pattern_index,
-  uint32_t capture_index
-);
+TSQuantifier ts_query_capture_quantifier_for_id(const TSQuery *self,
+                                                uint32_t pattern_index,
+                                                uint32_t capture_index);
 
-const char *ts_query_string_value_for_id(
-  const TSQuery *self,
-  uint32_t index,
-  uint32_t *length
-);
+const char *ts_query_string_value_for_id(const TSQuery *self, uint32_t index,
+                                         uint32_t *length);
 
 /**
  * Disable a certain capture within a query.
@@ -1002,14 +976,14 @@ void ts_query_disable_pattern(TSQuery *self, uint32_t pattern_index);
  *    index of the pattern that matched, and an array of captures. Because
  *    multiple patterns can match the same set of nodes, one match may contain
  *    captures that appear *before* some of the captures from a previous match.
- * 2. Repeatedly call [`ts_query_cursor_next_capture`] to iterate over all of the
- *    individual *captures* in the order that they appear. This is useful if
+ * 2. Repeatedly call [`ts_query_cursor_next_capture`] to iterate over all of
+ * the individual *captures* in the order that they appear. This is useful if
  *    don't care about which pattern matched, and just want a single ordered
  *    sequence of captures.
  *
  * If you don't care about consuming all of the results, you can stop calling
- * [`ts_query_cursor_next_match`] or [`ts_query_cursor_next_capture`] at any point.
- *  You can then start executing another query on another node by calling
+ * [`ts_query_cursor_next_match`] or [`ts_query_cursor_next_capture`] at any
+ * point. You can then start executing another query on another node by calling
  *  [`ts_query_cursor_exec`] again.
  */
 TSQueryCursor *ts_query_cursor_new(void);
@@ -1022,17 +996,15 @@ void ts_query_cursor_delete(TSQueryCursor *self);
 /**
  * Start running a given query on a given node.
  */
-void ts_query_cursor_exec(TSQueryCursor *self, const TSQuery *query, TSNode node);
+void ts_query_cursor_exec(TSQueryCursor *self, const TSQuery *query,
+                          TSNode node);
 
 /**
  * Start running a given query on a given node, with some options.
  */
 void ts_query_cursor_exec_with_options(
-  TSQueryCursor *self,
-  const TSQuery *query,
-  TSNode node,
-  const TSQueryCursorOptions *query_options
-);
+    TSQueryCursor *self, const TSQuery *query, TSNode node,
+    const TSQueryCursorOptions *query_options);
 
 /**
  * Manage the maximum number of in-progress matches allowed by this query
@@ -1052,36 +1024,38 @@ void ts_query_cursor_set_match_limit(TSQueryCursor *self, uint32_t limit);
 /**
  * Set the range of bytes in which the query will be executed.
  *
- * The query cursor will return matches that intersect with the given point range.
- * This means that a match may be returned even if some of its captures fall
- * outside the specified range, as long as at least part of the match
+ * The query cursor will return matches that intersect with the given point
+ * range. This means that a match may be returned even if some of its captures
+ * fall outside the specified range, as long as at least part of the match
  * overlaps with the range.
  *
  * For example, if a query pattern matches a node that spans a larger area
  * than the specified range, but part of that node intersects with the range,
  * the entire match will be returned.
  *
- * This will return `false` if the start byte is greater than the end byte, otherwise
- * it will return `true`.
+ * This will return `false` if the start byte is greater than the end byte,
+ * otherwise it will return `true`.
  */
-bool ts_query_cursor_set_byte_range(TSQueryCursor *self, uint32_t start_byte, uint32_t end_byte);
+bool ts_query_cursor_set_byte_range(TSQueryCursor *self, uint32_t start_byte,
+                                    uint32_t end_byte);
 
 /**
  * Set the range of (row, column) positions in which the query will be executed.
  *
- * The query cursor will return matches that intersect with the given point range.
- * This means that a match may be returned even if some of its captures fall
- * outside the specified range, as long as at least part of the match
+ * The query cursor will return matches that intersect with the given point
+ * range. This means that a match may be returned even if some of its captures
+ * fall outside the specified range, as long as at least part of the match
  * overlaps with the range.
  *
  * For example, if a query pattern matches a node that spans a larger area
  * than the specified range, but part of that node intersects with the range,
  * the entire match will be returned.
  *
- * This will return `false` if the start point is greater than the end point, otherwise
- * it will return `true`.
+ * This will return `false` if the start point is greater than the end point,
+ * otherwise it will return `true`.
  */
-bool ts_query_cursor_set_point_range(TSQueryCursor *self, TSPoint start_point, TSPoint end_point);
+bool ts_query_cursor_set_point_range(TSQueryCursor *self, TSPoint start_point,
+                                     TSPoint end_point);
 
 /**
  * Advance to the next match of the currently running query.
@@ -1098,11 +1072,8 @@ void ts_query_cursor_remove_match(TSQueryCursor *self, uint32_t match_id);
  * If there is a capture, write its match to `*match` and its index within
  * the match's capture list to `*capture_index`. Otherwise, return `false`.
  */
-bool ts_query_cursor_next_capture(
-  TSQueryCursor *self,
-  TSQueryMatch *match,
-  uint32_t *capture_index
-);
+bool ts_query_cursor_next_capture(TSQueryCursor *self, TSQueryMatch *match,
+                                  uint32_t *capture_index);
 
 /**
  * Set the maximum start depth for a query cursor.
@@ -1118,7 +1089,8 @@ bool ts_query_cursor_next_capture(
  *
  * Set to `UINT32_MAX` to remove the maximum start depth.
  */
-void ts_query_cursor_set_max_start_depth(TSQueryCursor *self, uint32_t max_start_depth);
+void ts_query_cursor_set_max_start_depth(TSQueryCursor *self,
+                                         uint32_t max_start_depth);
 
 /**********************/
 /* Section - Language */
@@ -1142,18 +1114,14 @@ uint32_t ts_language_symbol_count(const TSLanguage *self);
 
 /**
  * Get the number of valid states in this language.
-*/
+ */
 uint32_t ts_language_state_count(const TSLanguage *self);
 
 /**
  * Get the numerical id for the given node type string.
  */
-TSSymbol ts_language_symbol_for_name(
-  const TSLanguage *self,
-  const char *string,
-  uint32_t length,
-  bool is_named
-);
+TSSymbol ts_language_symbol_for_name(const TSLanguage *self, const char *string,
+                                     uint32_t length, bool is_named);
 
 /**
  * Get the number of distinct field names in the language.
@@ -1168,23 +1136,22 @@ const char *ts_language_field_name_for_id(const TSLanguage *self, TSFieldId id);
 /**
  * Get the numerical id for the given field name string.
  */
-TSFieldId ts_language_field_id_for_name(const TSLanguage *self, const char *name, uint32_t name_length);
+TSFieldId ts_language_field_id_for_name(const TSLanguage *self,
+                                        const char *name, uint32_t name_length);
 
 /**
  * Get a list of all supertype symbols for the language.
-*/
-const TSSymbol *ts_language_supertypes(const TSLanguage *self, uint32_t *length);
+ */
+const TSSymbol *ts_language_supertypes(const TSLanguage *self,
+                                       uint32_t *length);
 
 /**
  * Get a list of all subtype symbol ids for a given supertype symbol.
  *
  * See [`ts_language_supertypes`] for fetching all supertype symbols.
  */
-const TSSymbol *ts_language_subtypes(
-  const TSLanguage *self,
-  TSSymbol supertype,
-  uint32_t *length
-);
+const TSSymbol *ts_language_subtypes(const TSLanguage *self, TSSymbol supertype,
+                                     uint32_t *length);
 
 /**
  * Get a node type string for the given numerical id.
@@ -1221,8 +1188,9 @@ const TSLanguageMetadata *ts_language_metadata(const TSLanguage *self);
  * Get the next parse state. Combine this with lookahead iterators to generate
  * completion suggestions or valid symbols in error nodes. Use
  * [`ts_node_grammar_symbol`] for valid symbols.
-*/
-TSStateId ts_language_next_state(const TSLanguage *self, TSStateId state, TSSymbol symbol);
+ */
+TSStateId ts_language_next_state(const TSLanguage *self, TSStateId state,
+                                 TSSymbol symbol);
 
 /**
  * Get the name of this language. This returns `NULL` in older parsers.
@@ -1247,12 +1215,13 @@ const char *ts_language_name(const TSLanguage *self);
  * error diagnostics. To get symbols valid in an ERROR node, use the lookahead
  * iterator on its first leaf node state. For `MISSING` nodes, a lookahead
  * iterator created on the previous non-extra leaf node may be appropriate.
-*/
-TSLookaheadIterator *ts_lookahead_iterator_new(const TSLanguage *self, TSStateId state);
+ */
+TSLookaheadIterator *ts_lookahead_iterator_new(const TSLanguage *self,
+                                               TSStateId state);
 
 /**
  * Delete a lookahead iterator freeing all the memory used.
-*/
+ */
 void ts_lookahead_iterator_delete(TSLookaheadIterator *self);
 
 /**
@@ -1260,39 +1229,43 @@ void ts_lookahead_iterator_delete(TSLookaheadIterator *self);
  *
  * This returns `true` if the iterator was reset to the given state and `false`
  * otherwise.
-*/
-bool ts_lookahead_iterator_reset_state(TSLookaheadIterator *self, TSStateId state);
+ */
+bool ts_lookahead_iterator_reset_state(TSLookaheadIterator *self,
+                                       TSStateId state);
 
 /**
  * Reset the lookahead iterator.
  *
  * This returns `true` if the language was set successfully and `false`
  * otherwise.
-*/
-bool ts_lookahead_iterator_reset(TSLookaheadIterator *self, const TSLanguage *language, TSStateId state);
+ */
+bool ts_lookahead_iterator_reset(TSLookaheadIterator *self,
+                                 const TSLanguage *language, TSStateId state);
 
 /**
  * Get the current language of the lookahead iterator.
-*/
-const TSLanguage *ts_lookahead_iterator_language(const TSLookaheadIterator *self);
+ */
+const TSLanguage *
+ts_lookahead_iterator_language(const TSLookaheadIterator *self);
 
 /**
  * Advance the lookahead iterator to the next symbol.
  *
  * This returns `true` if there is a new symbol and `false` otherwise.
-*/
+ */
 bool ts_lookahead_iterator_next(TSLookaheadIterator *self);
 
 /**
  * Get the current symbol of the lookahead iterator;
-*/
+ */
 TSSymbol ts_lookahead_iterator_current_symbol(const TSLookaheadIterator *self);
 
 /**
  * Get the current symbol type of the lookahead iterator as a null terminated
  * string.
-*/
-const char *ts_lookahead_iterator_current_symbol_name(const TSLookaheadIterator *self);
+ */
+const char *
+ts_lookahead_iterator_current_symbol_name(const TSLookaheadIterator *self);
 
 /*************************************/
 /* Section - WebAssembly Integration */
@@ -1317,10 +1290,7 @@ typedef struct {
 /**
  * Create a Wasm store.
  */
-TSWasmStore *ts_wasm_store_new(
-  TSWasmEngine *engine,
-  TSWasmError *error
-);
+TSWasmStore *ts_wasm_store_new(TSWasmEngine *engine, TSWasmError *error);
 
 /**
  * Free the memory associated with the given Wasm store.
@@ -1334,13 +1304,10 @@ void ts_wasm_store_delete(TSWasmStore *);
  * can be used with any Wasm store, it doesn't need to be the same store that
  * was used to originally load it.
  */
-const TSLanguage *ts_wasm_store_load_language(
-  TSWasmStore *,
-  const char *name,
-  const char *wasm,
-  uint32_t wasm_len,
-  TSWasmError *error
-);
+const TSLanguage *ts_wasm_store_load_language(TSWasmStore *, const char *name,
+                                              const char *wasm,
+                                              uint32_t wasm_len,
+                                              TSWasmError *error);
 
 /**
  * Get the number of languages instantiated in the given Wasm store.
@@ -1385,21 +1352,387 @@ TSWasmStore *ts_parser_take_wasm_store(TSParser *);
  *  2. The new allocator shares its state with the old one, so it is capable
  *     of freeing memory that was allocated by the old allocator.
  */
-void ts_set_allocator(
-  void *(*new_malloc)(size_t),
-	void *(*new_calloc)(size_t, size_t),
-	void *(*new_realloc)(void *, size_t),
-	void (*new_free)(void *)
-);
+void ts_set_allocator(void *(*new_malloc)(size_t),
+                      void *(*new_calloc)(size_t, size_t),
+                      void *(*new_realloc)(void *, size_t),
+                      void (*new_free)(void *));
 
 #ifdef __cplusplus
 }
 #endif
 
-#ifndef TREE_SITTER_HIDE_SYMBOLS
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC visibility pop
-#endif
+// #ifndef TREE_SITTER_HIDE_SYMBOLS
+// #if defined(__GNUC__) || defined(__clang__)
+// #pragma GCC visibility pop
+// #endif
+// #endif
+
+#ifdef TS_INCLUDE_SYMBOLS
+// copeid from parser.c
+enum ts_symbol_identifiers {
+  sym_identifier = 1,
+  aux_sym_preproc_include_token1 = 2,
+  aux_sym_preproc_include_token2 = 3,
+  aux_sym_preproc_def_token1 = 4,
+  anon_sym_LPAREN = 5,
+  anon_sym_DOT_DOT_DOT = 6,
+  anon_sym_COMMA = 7,
+  anon_sym_RPAREN = 8,
+  aux_sym_preproc_if_token1 = 9,
+  anon_sym_LF = 10,
+  aux_sym_preproc_if_token2 = 11,
+  aux_sym_preproc_ifdef_token1 = 12,
+  aux_sym_preproc_ifdef_token2 = 13,
+  aux_sym_preproc_else_token1 = 14,
+  aux_sym_preproc_elif_token1 = 15,
+  aux_sym_preproc_elifdef_token1 = 16,
+  aux_sym_preproc_elifdef_token2 = 17,
+  sym_preproc_arg = 18,
+  sym_preproc_directive = 19,
+  anon_sym_LPAREN2 = 20,
+  anon_sym_defined = 21,
+  anon_sym_BANG = 22,
+  anon_sym_TILDE = 23,
+  anon_sym_DASH = 24,
+  anon_sym_PLUS = 25,
+  anon_sym_STAR = 26,
+  anon_sym_SLASH = 27,
+  anon_sym_PERCENT = 28,
+  anon_sym_PIPE_PIPE = 29,
+  anon_sym_AMP_AMP = 30,
+  anon_sym_PIPE = 31,
+  anon_sym_CARET = 32,
+  anon_sym_AMP = 33,
+  anon_sym_EQ_EQ = 34,
+  anon_sym_BANG_EQ = 35,
+  anon_sym_GT = 36,
+  anon_sym_GT_EQ = 37,
+  anon_sym_LT_EQ = 38,
+  anon_sym_LT = 39,
+  anon_sym_LT_LT = 40,
+  anon_sym_GT_GT = 41,
+  anon_sym_SEMI = 42,
+  anon_sym___extension__ = 43,
+  anon_sym_typedef = 44,
+  anon_sym_extern = 45,
+  anon_sym___attribute__ = 46,
+  anon_sym___attribute = 47,
+  anon_sym_COLON_COLON = 48,
+  anon_sym_LBRACK_LBRACK = 49,
+  anon_sym_RBRACK_RBRACK = 50,
+  anon_sym___declspec = 51,
+  anon_sym___based = 52,
+  anon_sym___cdecl = 53,
+  anon_sym___clrcall = 54,
+  anon_sym___stdcall = 55,
+  anon_sym___fastcall = 56,
+  anon_sym___thiscall = 57,
+  anon_sym___vectorcall = 58,
+  sym_ms_restrict_modifier = 59,
+  sym_ms_unsigned_ptr_modifier = 60,
+  sym_ms_signed_ptr_modifier = 61,
+  anon_sym__unaligned = 62,
+  anon_sym___unaligned = 63,
+  anon_sym_LBRACE = 64,
+  anon_sym_RBRACE = 65,
+  anon_sym_signed = 66,
+  anon_sym_unsigned = 67,
+  anon_sym_long = 68,
+  anon_sym_short = 69,
+  anon_sym_LBRACK = 70,
+  anon_sym_static = 71,
+  anon_sym_RBRACK = 72,
+  anon_sym_EQ = 73,
+  anon_sym_auto = 74,
+  anon_sym_register = 75,
+  anon_sym_inline = 76,
+  anon_sym___inline = 77,
+  anon_sym___inline__ = 78,
+  anon_sym___forceinline = 79,
+  anon_sym_thread_local = 80,
+  anon_sym___thread = 81,
+  anon_sym_const = 82,
+  anon_sym_constexpr = 83,
+  anon_sym_volatile = 84,
+  anon_sym_restrict = 85,
+  anon_sym___restrict__ = 86,
+  anon_sym__Atomic = 87,
+  anon_sym__Noreturn = 88,
+  anon_sym_noreturn = 89,
+  anon_sym__Nonnull = 90,
+  anon_sym_alignas = 91,
+  anon_sym__Alignas = 92,
+  sym_primitive_type = 93,
+  anon_sym_enum = 94,
+  anon_sym_COLON = 95,
+  anon_sym_struct = 96,
+  anon_sym_union = 97,
+  anon_sym_if = 98,
+  anon_sym_else = 99,
+  anon_sym_switch = 100,
+  anon_sym_case = 101,
+  anon_sym_default = 102,
+  anon_sym_while = 103,
+  anon_sym_do = 104,
+  anon_sym_for = 105,
+  anon_sym_return = 106,
+  anon_sym_break = 107,
+  anon_sym_continue = 108,
+  anon_sym_goto = 109,
+  anon_sym___try = 110,
+  anon_sym___except = 111,
+  anon_sym___finally = 112,
+  anon_sym___leave = 113,
+  anon_sym_QMARK = 114,
+  anon_sym_STAR_EQ = 115,
+  anon_sym_SLASH_EQ = 116,
+  anon_sym_PERCENT_EQ = 117,
+  anon_sym_PLUS_EQ = 118,
+  anon_sym_DASH_EQ = 119,
+  anon_sym_LT_LT_EQ = 120,
+  anon_sym_GT_GT_EQ = 121,
+  anon_sym_AMP_EQ = 122,
+  anon_sym_CARET_EQ = 123,
+  anon_sym_PIPE_EQ = 124,
+  anon_sym_DASH_DASH = 125,
+  anon_sym_PLUS_PLUS = 126,
+  anon_sym_sizeof = 127,
+  anon_sym___alignof__ = 128,
+  anon_sym___alignof = 129,
+  anon_sym__alignof = 130,
+  anon_sym_alignof = 131,
+  anon_sym__Alignof = 132,
+  anon_sym_offsetof = 133,
+  anon_sym__Generic = 134,
+  anon_sym_asm = 135,
+  anon_sym___asm__ = 136,
+  anon_sym___asm = 137,
+  anon_sym___volatile__ = 138,
+  anon_sym_DOT = 139,
+  anon_sym_DASH_GT = 140,
+  sym_number_literal = 141,
+  anon_sym_L_SQUOTE = 142,
+  anon_sym_u_SQUOTE = 143,
+  anon_sym_U_SQUOTE = 144,
+  anon_sym_u8_SQUOTE = 145,
+  anon_sym_SQUOTE = 146,
+  aux_sym_char_literal_token1 = 147,
+  anon_sym_L_DQUOTE = 148,
+  anon_sym_u_DQUOTE = 149,
+  anon_sym_U_DQUOTE = 150,
+  anon_sym_u8_DQUOTE = 151,
+  anon_sym_DQUOTE = 152,
+  aux_sym_string_literal_token1 = 153,
+  sym_escape_sequence = 154,
+  sym_system_lib_string = 155,
+  sym_true = 156,
+  sym_false = 157,
+  anon_sym_NULL = 158,
+  anon_sym_nullptr = 159,
+  sym_comment = 160,
+  sym_translation_unit = 161,
+  sym__top_level_item = 162,
+  sym__block_item = 163,
+  sym_preproc_include = 164,
+  sym_preproc_def = 165,
+  sym_preproc_function_def = 166,
+  sym_preproc_params = 167,
+  sym_preproc_call = 168,
+  sym_preproc_if = 169,
+  sym_preproc_ifdef = 170,
+  sym_preproc_else = 171,
+  sym_preproc_elif = 172,
+  sym_preproc_elifdef = 173,
+  sym_preproc_if_in_field_declaration_list = 174,
+  sym_preproc_ifdef_in_field_declaration_list = 175,
+  sym_preproc_else_in_field_declaration_list = 176,
+  sym_preproc_elif_in_field_declaration_list = 177,
+  sym_preproc_elifdef_in_field_declaration_list = 178,
+  sym_preproc_if_in_enumerator_list = 179,
+  sym_preproc_ifdef_in_enumerator_list = 180,
+  sym_preproc_else_in_enumerator_list = 181,
+  sym_preproc_elif_in_enumerator_list = 182,
+  sym_preproc_elifdef_in_enumerator_list = 183,
+  sym_preproc_if_in_enumerator_list_no_comma = 184,
+  sym_preproc_ifdef_in_enumerator_list_no_comma = 185,
+  sym_preproc_else_in_enumerator_list_no_comma = 186,
+  sym_preproc_elif_in_enumerator_list_no_comma = 187,
+  sym_preproc_elifdef_in_enumerator_list_no_comma = 188,
+  sym__preproc_expression = 189,
+  sym_preproc_parenthesized_expression = 190,
+  sym_preproc_defined = 191,
+  sym_preproc_unary_expression = 192,
+  sym_preproc_call_expression = 193,
+  sym_preproc_argument_list = 194,
+  sym_preproc_binary_expression = 195,
+  sym_function_definition = 196,
+  sym__old_style_function_definition = 197,
+  sym_declaration = 198,
+  sym_type_definition = 199,
+  sym__type_definition_type = 200,
+  sym__type_definition_declarators = 201,
+  sym__declaration_modifiers = 202,
+  sym__declaration_specifiers = 203,
+  sym_linkage_specification = 204,
+  sym_attribute_specifier = 205,
+  sym_attribute = 206,
+  sym_attribute_declaration = 207,
+  sym_ms_declspec_modifier = 208,
+  sym_ms_based_modifier = 209,
+  sym_ms_call_modifier = 210,
+  sym_ms_unaligned_ptr_modifier = 211,
+  sym_ms_pointer_modifier = 212,
+  sym_declaration_list = 213,
+  sym__declarator = 214,
+  sym__declaration_declarator = 215,
+  sym__field_declarator = 216,
+  sym__type_declarator = 217,
+  sym__abstract_declarator = 218,
+  sym_parenthesized_declarator = 219,
+  sym_parenthesized_field_declarator = 220,
+  sym_parenthesized_type_declarator = 221,
+  sym_abstract_parenthesized_declarator = 222,
+  sym_attributed_declarator = 223,
+  sym_attributed_field_declarator = 224,
+  sym_attributed_type_declarator = 225,
+  sym_pointer_declarator = 226,
+  sym_pointer_field_declarator = 227,
+  sym_pointer_type_declarator = 228,
+  sym_abstract_pointer_declarator = 229,
+  sym_function_declarator = 230,
+  sym__function_declaration_declarator = 231,
+  sym_function_field_declarator = 232,
+  sym_function_type_declarator = 233,
+  sym_abstract_function_declarator = 234,
+  sym__old_style_function_declarator = 235,
+  sym_array_declarator = 236,
+  sym_array_field_declarator = 237,
+  sym_array_type_declarator = 238,
+  sym_abstract_array_declarator = 239,
+  sym_init_declarator = 240,
+  sym_compound_statement = 241,
+  sym_storage_class_specifier = 242,
+  sym_type_qualifier = 243,
+  sym_alignas_qualifier = 244,
+  sym_type_specifier = 245,
+  sym_sized_type_specifier = 246,
+  sym_enum_specifier = 247,
+  sym_enumerator_list = 248,
+  sym_struct_specifier = 249,
+  sym_union_specifier = 250,
+  sym_field_declaration_list = 251,
+  sym__field_declaration_list_item = 252,
+  sym_field_declaration = 253,
+  sym__field_declaration_declarator = 254,
+  sym_bitfield_clause = 255,
+  sym_enumerator = 256,
+  sym_variadic_parameter = 257,
+  sym_parameter_list = 258,
+  sym__old_style_parameter_list = 259,
+  sym_parameter_declaration = 260,
+  sym_attributed_statement = 261,
+  sym_statement = 262,
+  sym__top_level_statement = 263,
+  sym_labeled_statement = 264,
+  sym__top_level_expression_statement = 265,
+  sym_expression_statement = 266,
+  sym_if_statement = 267,
+  sym_else_clause = 268,
+  sym_switch_statement = 269,
+  sym_case_statement = 270,
+  sym_while_statement = 271,
+  sym_do_statement = 272,
+  sym_for_statement = 273,
+  sym__for_statement_body = 274,
+  sym_return_statement = 275,
+  sym_break_statement = 276,
+  sym_continue_statement = 277,
+  sym_goto_statement = 278,
+  sym_seh_try_statement = 279,
+  sym_seh_except_clause = 280,
+  sym_seh_finally_clause = 281,
+  sym_seh_leave_statement = 282,
+  sym_expression = 283,
+  sym__string = 284,
+  sym_comma_expression = 285,
+  sym_conditional_expression = 286,
+  sym_assignment_expression = 287,
+  sym_pointer_expression = 288,
+  sym_unary_expression = 289,
+  sym_binary_expression = 290,
+  sym_update_expression = 291,
+  sym_cast_expression = 292,
+  sym_type_descriptor = 293,
+  sym_sizeof_expression = 294,
+  sym_alignof_expression = 295,
+  sym_offsetof_expression = 296,
+  sym_generic_expression = 297,
+  sym_subscript_expression = 298,
+  sym_call_expression = 299,
+  sym_gnu_asm_expression = 300,
+  sym_gnu_asm_qualifier = 301,
+  sym_gnu_asm_output_operand_list = 302,
+  sym_gnu_asm_output_operand = 303,
+  sym_gnu_asm_input_operand_list = 304,
+  sym_gnu_asm_input_operand = 305,
+  sym_gnu_asm_clobber_list = 306,
+  sym_gnu_asm_goto_list = 307,
+  sym_extension_expression = 308,
+  sym_argument_list = 309,
+  sym_field_expression = 310,
+  sym_compound_literal_expression = 311,
+  sym_parenthesized_expression = 312,
+  sym_initializer_list = 313,
+  sym_initializer_pair = 314,
+  sym_subscript_designator = 315,
+  sym_subscript_range_designator = 316,
+  sym_field_designator = 317,
+  sym_char_literal = 318,
+  sym_concatenated_string = 319,
+  sym_string_literal = 320,
+  sym_null = 321,
+  sym__empty_declaration = 322,
+  sym_macro_type_specifier = 323,
+  aux_sym_translation_unit_repeat1 = 324,
+  aux_sym_preproc_params_repeat1 = 325,
+  aux_sym_preproc_if_repeat1 = 326,
+  aux_sym_preproc_if_in_field_declaration_list_repeat1 = 327,
+  aux_sym_preproc_if_in_enumerator_list_repeat1 = 328,
+  aux_sym_preproc_if_in_enumerator_list_no_comma_repeat1 = 329,
+  aux_sym_preproc_argument_list_repeat1 = 330,
+  aux_sym__old_style_function_definition_repeat1 = 331,
+  aux_sym_declaration_repeat1 = 332,
+  aux_sym_type_definition_repeat1 = 333,
+  aux_sym__type_definition_type_repeat1 = 334,
+  aux_sym__type_definition_declarators_repeat1 = 335,
+  aux_sym__declaration_specifiers_repeat1 = 336,
+  aux_sym_attribute_declaration_repeat1 = 337,
+  aux_sym_attributed_declarator_repeat1 = 338,
+  aux_sym_pointer_declarator_repeat1 = 339,
+  aux_sym_function_declarator_repeat1 = 340,
+  aux_sym_array_declarator_repeat1 = 341,
+  aux_sym_sized_type_specifier_repeat1 = 342,
+  aux_sym_enumerator_list_repeat1 = 343,
+  aux_sym__field_declaration_declarator_repeat1 = 344,
+  aux_sym_parameter_list_repeat1 = 345,
+  aux_sym__old_style_parameter_list_repeat1 = 346,
+  aux_sym_case_statement_repeat1 = 347,
+  aux_sym_generic_expression_repeat1 = 348,
+  aux_sym_gnu_asm_expression_repeat1 = 349,
+  aux_sym_gnu_asm_output_operand_list_repeat1 = 350,
+  aux_sym_gnu_asm_input_operand_list_repeat1 = 351,
+  aux_sym_gnu_asm_clobber_list_repeat1 = 352,
+  aux_sym_gnu_asm_goto_list_repeat1 = 353,
+  aux_sym_argument_list_repeat1 = 354,
+  aux_sym_initializer_list_repeat1 = 355,
+  aux_sym_initializer_pair_repeat1 = 356,
+  aux_sym_char_literal_repeat1 = 357,
+  aux_sym_concatenated_string_repeat1 = 358,
+  aux_sym_string_literal_repeat1 = 359,
+  alias_sym_field_identifier = 360,
+  alias_sym_statement_identifier = 361,
+  alias_sym_type_identifier = 362,
+};
 #endif
 
-#endif  // TREE_SITTER_API_H_
+#endif // TREE_SITTER_API_H_
