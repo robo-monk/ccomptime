@@ -1,3 +1,4 @@
+#define NOB_STRIP_PREFIX
 /* nob - v1.23.0 - Public Domain - https://github.com/tsoding/nob.h
 
    This library is the next generation of the

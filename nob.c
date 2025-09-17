@@ -1,5 +1,4 @@
 #define NOB_IMPLEMENTATION
-#define NOB_STRIP_PREFIX
 #include "nob.h"
 
 #define BUILD_DIR "build/"
