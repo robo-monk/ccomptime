@@ -1,0 +1,1 @@
+./deps/tree_sitter/include/tree_sitter/api.h
