@@ -406,19 +406,18 @@ static void walk(WalkContext *const ctx, LocalContext local, TSNode node,
         }
       }
 
-      nob_sb_appendf(&ctx->out_h, "#define _CCOMPTIME_OUTPUT_%d\n",
-                     ctx->comptime_count);
-
       if (local.is_assigning_to_var) {
-        nob_sb_appendf(&ctx->out_h,
-                       "#define _cct_%d _CCOMPTIME_OUTPUT_%d ? 0 :\n",
+        nob_sb_appendf(&ctx->out_h, "#define _cct_%d _CCOMPTIME_X(%d) ? 0 :\n",
                        ctx->comptime_count, ctx->comptime_count);
       } else if (local.is_inside_function_body) {
         nob_sb_appendf(&ctx->out_h,
-                       "#define _cct_%d _CCOMPTIME_OUTPUT_%d;if(0)\n",
-                       ctx->comptime_count, ctx->comptime_count);
+                       "#define _cct_%d _CCOMPTIME_X(%d); /* comptime block "
+                       "statement %d */\n",
+                       ctx->comptime_count, ctx->comptime_count,
+                       ctx->comptime_count);
       } else {
-        nob_sb_appendf(&ctx->out_h, "#define _cct_%d void _cct_fn_%d(void)\n",
+        nob_sb_appendf(&ctx->out_h,
+                       "#define _CCOMPTIME_X_%d\nvoid _cct_fn_%d(void)\n",
                        ctx->comptime_count, ctx->comptime_count);
       }
 
@@ -451,13 +450,14 @@ static void walk(WalkContext *const ctx, LocalContext local, TSNode node,
         // call the function in the main;
 
         nob_sb_appendf(&ctx->runner.definitions,
-                       "\nvoid _Comptime__exec%d(void){\n%.*s;\n}\n",
+                       "\nchar* _Comptime__exec%d(void){\n%.*s;\n}\n",
                        ctx->comptime_count, (int)(end - start + 1), start);
 
-        nob_sb_appendf(
-            &ctx->runner.main,
-            "_Comptime__exec%d(); // execute comptime statement #%d\n",
-            ctx->comptime_count, ctx->comptime_count);
+        nob_sb_appendf(&ctx->runner.main,
+                       "_Register_Comptime_exec(_Comptime__exec%d(), %d); // "
+                       "execute comptime statement #%d\n",
+                       ctx->comptime_count, ctx->comptime_count,
+                       ctx->comptime_count);
       }
 
       ctx->comptime_count++;
@@ -484,9 +484,11 @@ int run_file(Context *ctx) {
   WalkContext walk_ctx = (WalkContext){0};
   sb_appendf(&walk_ctx.out_h,
              "/*// @generated - ccomptime™ v0.0.1 - %lu \\*/\n", time(NULL));
-  sb_appendf(&walk_ctx.out_h, "#define _CONCAT_(x, y) x##y\n"
-                              "#define CONCAT(x, y) _CONCAT_(x, y)\n"
-                              "#define _Comptime CONCAT(_cct_, __COUNTER__)\n");
+  sb_appendf(&walk_ctx.out_h,
+             "#define _CONCAT_(x, y) x##y\n"
+             "#define CONCAT(x, y) _CONCAT_(x, y)\n"
+             "#define _Comptime(x) _COMPTIME_X(__COUNTER__, x)\n"
+             "#define _xComptime(x) CONCAT(_COMPTIME_X, __COUNTER__)(x)\n");
 
   walk(&walk_ctx, (LocalContext){0}, root, ctx->raw_source->items, 0);
   sb_appendf(&walk_ctx.out_h, "/* ---- */// the end. ///* ---- */\n");
@@ -495,16 +497,37 @@ int run_file(Context *ctx) {
   printf("\n\nGenerated header:\n%s\n", walk_ctx.out_h.items);
 
   String_Builder runner_file = {0};
+
+  sb_appendf(&runner_file,
+             "#include <stdlib.h>\n"
+             "#include <stdio.h>\n"
+             "static FILE *headers_file;\n"
+             "void _Register_Comptime_exec(char *exe_result, int index) {\n"
+             "  fprintf(headers_file, \"#define _COMPTIME_X%%d(x) %%s\\n\", "
+             "index, \"/*void block*/\"); // appends "
+             "text at the end\n"
+             "}\n");
+
   sb_appendf(&runner_file, "#define main _User_main // overwriting the entry "
                            "point of the program\n");
+  sb_appendf(&runner_file, "#define _COMPTIME_X(n, x)\n");
   sb_appendf(&runner_file, "#include \"%s\"\n", ctx->input_path);
   sb_appendf(&runner_file, "#undef main\n");
+  sb_appendf(&runner_file, "#undef _COMPTIME_X\n");
 
   sb_append_buf(&runner_file, walk_ctx.runner.definitions.items,
                 walk_ctx.runner.definitions.count);
 
-  sb_appendf(&runner_file, "\nint main(void) {\n%.*s}",
-             (int)walk_ctx.runner.main.count, walk_ctx.runner.main.items);
+  sb_appendf(&runner_file,
+             "\nint main(void) {\n"
+             "headers_file = fopen(\"%s\", "
+             "\"a\");if(!headers_file){perror(\"fopen\");return 1;}\n"
+             "\n%.*s\n"
+             "fprintf(headers_file, \"#define _COMPTIME_X(n, x) "
+             "CONCAT(_COMPTIME_X, n)(x)\\n\");\n"
+             "fclose(headers_file);\n}",
+             ctx->gen_header_path, (int)walk_ctx.runner.main.count,
+             walk_ctx.runner.main.items);
 
   write_entire_file(ctx->runner_cpath, runner_file.items, runner_file.count);
   write_entire_file(ctx->gen_header_path, walk_ctx.out_h.items,
