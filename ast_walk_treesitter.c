@@ -1,3 +1,4 @@
+#include "ansi.h"
 #include <stddef.h>
 #define HASHMAP_IMPLEMENTATION
 #include "deps/hashmap/hashmap.h"
@@ -13,7 +14,12 @@
 #include <string.h>
 #include <time.h>
 
-// From the C grammar package:
+#define fatal(s)                                                               \
+  fflush(stdout);                                                              \
+  printf("\n" RED("[FATAL] "s                                                  \
+                  "\n"));                                                      \
+  exit(1);
+
 extern const TSLanguage *tree_sitter_c(void);
 
 TSParser *cparser;
@@ -47,9 +53,16 @@ typedef struct {
 } MacroDefinition;
 
 typedef struct {
+  String_Builder definitions;
+  String_Builder main;
+} RunnerBuilder;
+
+typedef struct {
   String_Builder out_h;
   int comptime_count;
   HashMap macros;
+
+  RunnerBuilder runner;
 } WalkContext;
 
 // #define node_len(n) (int)(ts_node_end_byte(n) - ts_node_start_byte(n))
@@ -175,8 +188,8 @@ static void expand_macro_tree(MacroDefinition *macro_def, Strings arg_values,
 
 static bool ts_node_is_comptime_kw(TSNode node, const char *src) {
   assert(ts_node_symbol(node) == sym_identifier);
-  return strlen("comptime") == ts_node_range(node, src).len &&
-         memcmp(ts_node_range(node, src).start, "comptime",
+  return strlen("_Comptime") == ts_node_range(node, src).len &&
+         memcmp(ts_node_range(node, src).start, "_Comptime",
                 ts_node_range(node, src).len) == 0;
 }
 
@@ -310,8 +323,7 @@ static void walk(WalkContext *const ctx, LocalContext local, TSNode node,
   case 165: // preproc_def
     local.preproc_def_root = &node;
     break;
-
-  case 299: /* call exresssion */
+  case sym_call_expression: /* call exresssion */
     local.call_expression_root = &node;
     break;
   case sym_preproc_function_def: {
@@ -365,15 +377,14 @@ static void walk(WalkContext *const ctx, LocalContext local, TSNode node,
     macro->body_tree = tree;
     macro->body_src = ts_node_range(body, src).start;
 
-    printf("\n---- MACRO DEF SUB TREE ----\n");
-    debug_tree(tree, ts_node_range(body, src).start, 4);
-    printf("\n^^^^^^^ MACRO DEF SUB TREE ----\n");
+    /*
+        printf("\n---- MACRO DEF SUB TREE ----\n");
+        debug_tree(tree, ts_node_range(body, src).start, 4);
+        printf("\n^^^^^^^ MACRO DEF SUB TREE ----\n");
+    */
 
-    const char *key = src + ts_node_start_byte(macro->identifier);
-    int key_len = (int)(ts_node_end_byte(macro->identifier) -
-                        ts_node_start_byte(macro->identifier));
-
-    macros_put(&ctx->macros, key, key_len, macro);
+    macros_put(&ctx->macros, ts_node_range(macro->identifier, src).start,
+               ts_node_range(macro->identifier, src).len, macro);
     return;
   }
 
@@ -387,32 +398,64 @@ static void walk(WalkContext *const ctx, LocalContext local, TSNode node,
   if (sym == sym_identifier) {
     printf(" ~~");
     if (ts_node_is_comptime_kw(node, src)) {
-      printf("  [contains 'comptime'] (%d)", ctx->comptime_count);
+      printf(BLUE("  [contains 'comptime'] (%d)"), ctx->comptime_count);
       if (local.preproc_def_root) {
         if (local.child_idx == 1) {
-          // after #define
-          printf("\n---\nRedefining `comptime` macro is not supported\n");
-          exit(1);
+          fatal("Redefining `comptime` macro is not supported");
         }
-
-        printf("\n  [SKIP - within #define]\n");
-
-        // TODO: now we should preprocess this identifier and replace future
-        printf("  [FOUND COMPTIME POWERED MACRO]");
-        exit(1);
-        // return;
       }
 
       if (local.is_assigning_to_var) {
-        nob_sb_appendf(&ctx->out_h, "#define _cct_%d 1 ? 0 :\n",
-                       ctx->comptime_count);
+        nob_sb_appendf(&ctx->out_h,
+                       "#define _cct_%d _CCOMPTIME_OUTPUT_%d ? 0 :\n",
+                       ctx->comptime_count, ctx->comptime_count);
       } else if (local.is_inside_function_body) {
-        nob_sb_appendf(&ctx->out_h, "#define _cct_%d while (0)\n",
-                       ctx->comptime_count);
+        nob_sb_appendf(&ctx->out_h,
+                       "#define _cct_%d _CCOMPTIME_OUTPUT_%d;if(0)\n",
+                       ctx->comptime_count, ctx->comptime_count);
       } else {
         nob_sb_appendf(&ctx->out_h, "#define _cct_%d void _cct_fn_%d(void)\n",
                        ctx->comptime_count, ctx->comptime_count);
       }
+
+      if (ts_node_is_comptime_kw(node, src) && local.call_expression_root) {
+        TSNode argument_list = ts_node_child(*local.call_expression_root, 1);
+        assert(ts_node_symbol(argument_list) == sym_argument_list);
+        // the code to execute is within the argument_list:
+        String_View _comptime_code = ts_node_to_str_view(argument_list, src);
+        assert(_comptime_code.data[0] == '(');
+        printf("\n\n\n\n----> %c\n\n\n\n",
+               _comptime_code.data[_comptime_code.count - 1]);
+        assert(_comptime_code.data[_comptime_code.count - 1] == ')');
+        // assert(true);
+
+        char *start =
+            (char *)_comptime_code.data + 1; // skip the initial paren;
+        char *end = (char *)_comptime_code.data + _comptime_code.count - 2;
+
+        // trim initial white space
+        while (*start == ' ' || *start == '\t' || *start == '{') {
+          start++;
+        }
+        while (*end == ' ' || *end == '\t' || *end == '}' || *end == ';') {
+          end--;
+        }
+
+        nob_log(INFO, "\n=== FOUND _Comptime CODE ===\n%.*s\n=============",
+                (int)(end - start + 1), start);
+
+        // call the function in the main;
+
+        nob_sb_appendf(&ctx->runner.definitions,
+                       "\nvoid _Comptime__exec%d(void){\n%.*s;\n}\n",
+                       ctx->comptime_count, (int)(end - start + 1), start);
+
+        nob_sb_appendf(
+            &ctx->runner.main,
+            "_Comptime__exec%d(); // execute comptime statement #%d\n",
+            ctx->comptime_count, ctx->comptime_count);
+      }
+
       ctx->comptime_count++;
     }
   }
@@ -432,7 +475,9 @@ int main(int argc, char **argv) {
   }
 
   String_Builder src = {0};
-  read_entire_file(argv[1], &src);
+  const char *filename = argv[1];
+  read_entire_file(filename, &src);
+
   nob_sb_append_null(&src);
   // char *src = read_file(argv[1], &len);
   if (!src.items) {
@@ -458,6 +503,20 @@ int main(int argc, char **argv) {
   printf("comptime found : %d", walk_ctx.comptime_count);
 
   printf("\n\nGenerated header:\n%s\n", walk_ctx.out_h.items);
+
+  String_Builder runner_file = {0};
+  sb_appendf(&runner_file, "#define main _User_main // overwriting the entry "
+                           "point of the program\n");
+  sb_appendf(&runner_file, "#include \"%s\"\n", filename);
+  sb_appendf(&runner_file, "#undef main\n");
+
+  sb_append_buf(&runner_file, walk_ctx.runner.definitions.items,
+                walk_ctx.runner.definitions.count);
+
+  sb_appendf(&runner_file, "\nint main(void) {\n%.*s}",
+             (int)walk_ctx.runner.main.count, walk_ctx.runner.main.items);
+
+  write_entire_file("./test-runner.c", runner_file.items, runner_file.count);
 
   write_entire_file("./test-syntax.h", walk_ctx.out_h.items,
                     walk_ctx.out_h.count);
