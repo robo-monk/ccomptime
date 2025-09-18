@@ -3,6 +3,7 @@
 #define HASHMAP_IMPLEMENTATION
 #include "deps/hashmap/hashmap.h"
 
+#include "cli.c"
 #define NOB_IMPLEMENTATION
 #include "nob.h"
 
@@ -367,7 +368,7 @@ static void walk(WalkContext *const ctx, LocalContext local, TSNode node,
     if (!has_comptime_identifier(tree, ts_node_range(body, src).start)) {
       nob_log(INFO,
               "'%.*s' macro has been proven irrelevant because it does not "
-              "contain the `comptime` keyword",
+              "contain the `_Comptime` keyword",
               ts_node_len_start_tuple(macro->identifier, src));
     } else {
       nob_log(INFO, "'%.*s' macro is a *comptime* macro ",
@@ -398,12 +399,15 @@ static void walk(WalkContext *const ctx, LocalContext local, TSNode node,
   if (sym == sym_identifier) {
     printf(" ~~");
     if (ts_node_is_comptime_kw(node, src)) {
-      printf(BLUE("  [contains 'comptime'] (%d)"), ctx->comptime_count);
+      printf(BLUE("  [contains '_Comptime'] (%d)"), ctx->comptime_count);
       if (local.preproc_def_root) {
         if (local.child_idx == 1) {
-          fatal("Redefining `comptime` macro is not supported");
+          fatal("Redefining `_Comptime` macro is not supported");
         }
       }
+
+      nob_sb_appendf(&ctx->out_h, "#define _CCOMPTIME_OUTPUT_%d\n",
+                     ctx->comptime_count);
 
       if (local.is_assigning_to_var) {
         nob_sb_appendf(&ctx->out_h,
@@ -468,27 +472,13 @@ static void walk(WalkContext *const ctx, LocalContext local, TSNode node,
   }
 }
 
-int main(int argc, char **argv) {
-  if (argc < 2) {
-    fprintf(stderr, "usage: %s <file.c>\n", argv[0]);
-    return 1;
-  }
-
-  String_Builder src = {0};
-  const char *filename = argv[1];
-  read_entire_file(filename, &src);
-
-  nob_sb_append_null(&src);
-  // char *src = read_file(argv[1], &len);
-  if (!src.items) {
-    fprintf(stderr, "failed to read %s\n", argv[1]);
-    return 2;
-  }
+int run_file(Context *ctx) {
 
   cparser = ts_parser_new();
   ts_parser_set_language(cparser, tree_sitter_c());
 
-  TSTree *tree = ts_parser_parse_string(cparser, NULL, src.items, src.count);
+  TSTree *tree = ts_parser_parse_string(cparser, NULL, ctx->raw_source->items,
+                                        ctx->raw_source->count);
 
   TSNode root = ts_tree_root_node(tree);
   WalkContext walk_ctx = (WalkContext){0};
@@ -496,9 +486,9 @@ int main(int argc, char **argv) {
              "/*// @generated - ccomptime™ v0.0.1 - %lu \\*/\n", time(NULL));
   sb_appendf(&walk_ctx.out_h, "#define _CONCAT_(x, y) x##y\n"
                               "#define CONCAT(x, y) _CONCAT_(x, y)\n"
-                              "#define comptime CONCAT(_cct_, __COUNTER__)\n");
+                              "#define _Comptime CONCAT(_cct_, __COUNTER__)\n");
 
-  walk(&walk_ctx, (LocalContext){0}, root, src.items, 0);
+  walk(&walk_ctx, (LocalContext){0}, root, ctx->raw_source->items, 0);
   sb_appendf(&walk_ctx.out_h, "/* ---- */// the end. ///* ---- */\n");
   printf("comptime found : %d", walk_ctx.comptime_count);
 
@@ -507,7 +497,7 @@ int main(int argc, char **argv) {
   String_Builder runner_file = {0};
   sb_appendf(&runner_file, "#define main _User_main // overwriting the entry "
                            "point of the program\n");
-  sb_appendf(&runner_file, "#include \"%s\"\n", filename);
+  sb_appendf(&runner_file, "#include \"%s\"\n", ctx->input_path);
   sb_appendf(&runner_file, "#undef main\n");
 
   sb_append_buf(&runner_file, walk_ctx.runner.definitions.items,
@@ -516,14 +506,143 @@ int main(int argc, char **argv) {
   sb_appendf(&runner_file, "\nint main(void) {\n%.*s}",
              (int)walk_ctx.runner.main.count, walk_ctx.runner.main.items);
 
-  write_entire_file("./test-runner.c", runner_file.items, runner_file.count);
-
-  write_entire_file("./test-syntax.h", walk_ctx.out_h.items,
+  write_entire_file(ctx->runner_cpath, runner_file.items, runner_file.count);
+  write_entire_file(ctx->gen_header_path, walk_ctx.out_h.items,
                     walk_ctx.out_h.count);
 
   ts_tree_delete(tree);
   ts_parser_delete(cparser);
-  sb_free(src);
   sb_free(walk_ctx.out_h);
   return 0;
+}
+
+int main(int argc, char **argv) {
+  // if (argc < 2) {
+  //   fprintf(stderr, "usage: %s <file.c>\n", argv[0]);
+  //   return 1;
+  // }
+
+  CliArgs parsed_argv = {0};
+  if (cli(argc, argv, &parsed_argv) != 0) {
+    return 1;
+  }
+
+  nob_log(INFO, "Received %d arguments", argc);
+  nob_log(INFO, "Using compiler %s", Parsed_Argv_compiler_name(&parsed_argv));
+
+  Nob_Cmd final = {0};
+  nob_cmd_append(&final, Parsed_Argv_compiler_name(&parsed_argv));
+  cmd_append_arg_indeces(&parsed_argv, &parsed_argv.not_input_files, &final);
+
+  struct {
+    const char **items;
+    size_t count, capacity;
+  } files_to_remove = {0};
+
+  nob_da_foreach(int, index, &parsed_argv.input_files) {
+    // -- SETUP CONTEXT --
+    const char *input_filename = argv[*index];
+    String_Builder raw_source = {0}, preprocessed_source = {0};
+    Context ctx = {0};
+    ctx.input_path = input_filename;
+    ctx.parsed_argv = &parsed_argv;
+    ctx.raw_source = &raw_source;
+    ctx.preprocessed_source = &preprocessed_source;
+
+    Context_fill_paths(&ctx, input_filename);
+
+    // -- PREPROCESS INPUT FILE (expand macros) --
+    nob_log(INFO, "Processing %s source as SourceCode", input_filename);
+    // parse_source_file(input_filename, ctx.raw_source);
+    nob_read_entire_file(input_filename, ctx.raw_source);
+
+    run_file(&ctx);
+
+    assert(ctx.runner_cpath);
+    Nob_Cmd cmd = {0};
+
+    nob_cmd_append(&cmd, Parsed_Argv_compiler_name(ctx.parsed_argv));
+    cmd_append_arg_indeces(ctx.parsed_argv, &ctx.parsed_argv->not_input_files,
+                           &cmd);
+    nob_cmd_append(&cmd, "-O0");
+
+    cmd_append_inputs_except(ctx.parsed_argv, ctx.input_path, &cmd);
+    nob_cmd_append(&cmd, ctx.runner_cpath);
+
+    if (!(ctx.parsed_argv->cct_flags & CliComptimeFlag_Debug)) {
+      nob_cmd_append(&cmd, "-w");
+    } else {
+      nob_cmd_append(&cmd, "-g", "-fsanitize=address",
+                     "-fno-omit-frame-pointer");
+    }
+
+    nob_cmd_append(&cmd, "-o", ctx.runner_exepath);
+
+    if (!nob_cmd_run(&cmd)) {
+      nob_log(ERROR, "failed to compile runner %s", ctx.runner_cpath);
+      exit(1);
+    }
+
+    nob_log(INFO, "Running runner %s", ctx.runner_exepath);
+    nob_cmd_append(&cmd, nob_temp_sprintf("./%s", ctx.runner_exepath));
+    if (!nob_cmd_run(&cmd)) {
+      nob_log(ERROR, "failed to run runner %s", ctx.runner_cpath);
+      exit(1);
+    }
+
+    // nob_log(INFO, "Preprocessing source");
+    // run_preprocess_cmd_for_source(&parsed_argv, input_filename,
+    //                               ctx.preprocessed_path);
+
+    // nob_log(INFO, "Rewrote argv %s -> %s", input_filename,
+    //         ctx.preprocessed_path);
+
+    // nob_read_entire_file(ctx.preprocessed_path, ctx.preprocessed_source);
+
+    // -- GENERATE AND RUN THE RUNNER --
+    // log_info("Generating runner c");
+    // emit_runner_tu(&ctx, &comptime_blocks);
+    // compile_and_run_runner(&ctx);
+
+    // String_Builder repls2 = {0};
+    // substitute_block_values(&ctx, &comptime_blocks, &repls2);
+
+    // log_info("WRTING FINAL OUTPUT FILE %s (%zu)bytes ", ctx.final_out_path,
+    //          repls2.count);
+    // write_entire_file(ctx.final_out_path, repls2.items, repls2.count);
+
+    // // -- APPEND FINAL OUTPUT FILE TO ARGV --
+    // nob_cmd_append(&final, ctx.final_out_path);
+
+    // log_info("Appended final output file %s to final argv",
+    // ctx.final_out_path);
+
+    // log_info("Scheduling intermediate files for deletion");
+    da_append(&files_to_remove, ctx.preprocessed_path);
+    da_append(&files_to_remove, ctx.runner_cpath);
+    da_append(&files_to_remove, ctx.runner_exepath);
+    da_append(&files_to_remove, ctx.vals_path);
+    da_append(&files_to_remove, ctx.final_out_path);
+  }
+
+  // if (!cmd_run(&final)) {
+  //   nob_log(ERROR, "failed to compile final output");
+  //   return 1;
+  // } else {
+  //   nob_log(INFO, "Successfuly compiled final output");
+  // }
+
+  // -- CLEANUP --
+  nob_log(INFO, "Cleaning up %zu intermediate files", files_to_remove.count);
+  nob_da_foreach(const char *, f, &files_to_remove) {
+    if (!(parsed_argv.cct_flags & CliComptimeFlag_KeepInter)) {
+      nob_log(NOB_WARNING, "Deleting intermediate file %s", *f);
+      delete_file(*f);
+    } else {
+      nob_log(INFO, "Keeping intermediate file %s", *f);
+    }
+  }
+
+  // const char *filename = argv[1];
+  // return run_file(filename);
 }
