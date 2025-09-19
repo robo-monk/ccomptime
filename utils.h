@@ -1,4 +1,5 @@
 #include "nob.h"
+#include <stdlib.h>
 
 #define fatal(fmt, ...)                                                        \
   do {                                                                         \
@@ -19,8 +20,9 @@ void strings_append(Strings *strings, String_View item) {
 }
 
 Strings strings_new(size_t capacity) {
-  Strings strings = {.count = 0,
-                     .capacity = capacity,
-                     .items = malloc(sizeof(String_View) * capacity)};
+  Strings strings = {
+      .count = 0,
+      .capacity = capacity,
+      .items = (Nob_String_View *)malloc(sizeof(Nob_String_View) * capacity)};
   return strings;
 }

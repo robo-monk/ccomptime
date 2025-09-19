@@ -56,6 +56,30 @@ NodeRange ts_node_range(TSNode node, const char *src) {
   return (NodeRange){start, len};
 }
 
+// static void debug_tree
+static void debug_tree_node(TSNode node, const char *src, int depth) {
+
+  for (unsigned i = 0; i < depth; i++)
+    putchar(' ');
+
+  printf("- [%s] (%d)", ts_node_type(node), ts_node_symbol(node));
+
+  printf("  // %.*s", ts_node_range(node, src).len,
+         ts_node_range(node, src).start);
+
+  putchar('\n');
+
+  uint32_t n = ts_node_child_count(node);
+  for (uint32_t i = 0; i < n; i++) {
+    debug_tree_node(ts_node_child(node, i), src, depth + 2);
+  }
+}
+
+static void debug_tree(TSTree *tree, const char *src, int depth) {
+  TSNode root = ts_tree_root_node(tree);
+  debug_tree_node(root, src, depth);
+}
+
 #define ts_node_len_start_tuple(node, src)                                     \
   ts_node_range(node, src).len, ts_node_range(node, src).start
 
@@ -91,9 +115,45 @@ static void _expand_macro_node(TSNode node, const char *src, Strings *arg_names,
                                Strings *arg_values,
                                Macro_Replacements *replacements) {
 
+  assert(arg_names->count == arg_values->count);
   switch (ts_node_symbol(node)) {
+  case sym_preproc_directive: {
+    for (int i = 0; i < arg_names->count; i++) {
+      String_View arg_name = arg_names->items[i];
+      // String_View arg_name = {
+      //     .count = preproc_name.count - 1,
+      //     .data = preproc_name.data + 1 // skip the #
+      // };
+      NodeRange node_range = {
+          .start = ts_node_range(node, src).start + 1,
+          .len = ts_node_range(node, src).len - 1, // skip the #
+      };
+
+      nob_log(INFO, "~> %.*s", node_range.len, node_range.start);
+
+      if (node_range.len != arg_name.count)
+        continue;
+
+      assert(src && "src should be non null");
+
+      if (memcmp(node_range.start, arg_name.data, arg_name.count) == 0) {
+
+        String_View arg_value = arg_values->items[i];
+        // naive stringification:
+        String_Builder stringified_value = {0};
+        nob_sb_appendf(&stringified_value, "\"%.*s\"", (int)arg_value.count,
+                       arg_value.data);
+
+        Macro_Replacement repl = {.node = node,
+                                  .with =
+                                      sv_from_parts(stringified_value.items,
+                                                    stringified_value.count)};
+        nob_da_append(replacements, repl);
+      }
+    }
+    break;
+  }
   case sym_identifier: { // identifier
-    assert(arg_names->count == arg_values->count);
 
     for (int i = 0; i < arg_names->count; i++) {
       String_View arg_name = arg_names->items[i];
@@ -102,19 +162,11 @@ static void _expand_macro_node(TSNode node, const char *src, Strings *arg_names,
         continue;
 
       assert(src && "src should be non null");
-      // printf("node_len(node): %d, node_len(arg_node): %d [ASSESSING:
-      // %.*s]\n",
-      //        node_len(node), node_len(arg_node), node_len(arg_node),
-      //        node_start(arg_node));
 
       if (memcmp(ts_node_range(node, src).start, arg_name.data,
                  arg_name.count) == 0) {
 
         String_View arg_value = arg_values->items[i];
-        // printf("~> Replacing (arg:%d) '%.*s' with: %.*s\n", i,
-        //        (int)arg_name.count, arg_name.data, (int)arg_value.count,
-        //        arg_value.data);
-
         Macro_Replacement repl = {.node = node, .with = arg_value};
         nob_da_append(replacements, repl);
       }
@@ -135,7 +187,13 @@ static void expand_macro_tree(MacroDefinition *macro_def, Strings arg_values,
 
   assert(macro_def != NULL);
   assert(macro_def->arg_names.count == arg_values.count);
-  nob_log(INFO, "Expand macro tree with %zu args", arg_values.count);
+  nob_log(INFO, "------- Expand macro tree with %zu args ---- ",
+          arg_values.count);
+
+  debug_tree(macro_def->body_tree, macro_def->body_src, 4);
+  nob_log(INFO, "^^^^^^^ Expand macro tree with %zu args ^^^^^^^",
+          arg_values.count);
+
   TSNode root = ts_tree_root_node(macro_def->body_tree);
   NodeRange root_range = ts_node_range(root, macro_def->body_src);
 
@@ -143,11 +201,19 @@ static void expand_macro_tree(MacroDefinition *macro_def, Strings arg_values,
   _expand_macro_node(root, macro_def->body_src, &macro_def->arg_names,
                      &arg_values, &replacements);
 
-  nob_log(INFO, "Macro expansion replacements: %zu", replacements.count);
+  nob_log(INFO, "========= Macro expansion replacements: %zu",
+          replacements.count);
 
   assert(root_range.start == macro_def->body_src);
 
   char *cursor = (char *)macro_def->body_src;
+  if (replacements.count != arg_values.count) {
+    nob_log(ERROR, "Macro expansion failed: %zu replacements != %zu args",
+            replacements.count, arg_values.count);
+  }
+  assert(replacements.count == arg_values.count);
+
+  // if (replacements.count > 0) {
   nob_da_foreach(Macro_Replacement, it, &replacements) {
     NodeRange r = ts_node_range(it->node, macro_def->body_src);
     assert(r.start >= cursor);
@@ -161,6 +227,10 @@ static void expand_macro_tree(MacroDefinition *macro_def, Strings arg_values,
   }
   // flush remaining
   nob_sb_append_buf(out_sb, cursor, root_range.start + root_range.len - cursor);
+  nob_log(INFO, ">> Expanded as %.*s", (int)out_sb->count, out_sb->items);
+  // } else {
+  // nob_log(NOB_WARNING, "macro does not contain any replacements. sus");
+  // }
 }
 
 static bool ts_node_is_comptime_kw(TSNode node, const char *src) {
@@ -187,30 +257,6 @@ static bool _has_comptime_identifier(TSNode node, const char *src) {
 static bool has_comptime_identifier(TSTree *tree, const char *src) {
   assert(tree != NULL);
   return _has_comptime_identifier(ts_tree_root_node(tree), src);
-}
-
-// static void debug_tree
-static void debug_tree_node(TSNode node, const char *src, int depth) {
-
-  for (unsigned i = 0; i < depth; i++)
-    putchar(' ');
-
-  printf("- [%s] (%d)", ts_node_type(node), ts_node_symbol(node));
-
-  printf("  // %.*s", ts_node_range(node, src).len,
-         ts_node_range(node, src).start);
-
-  putchar('\n');
-
-  uint32_t n = ts_node_child_count(node);
-  for (uint32_t i = 0; i < n; i++) {
-    debug_tree_node(ts_node_child(node, i), src, depth + 2);
-  }
-}
-
-static void debug_tree(TSTree *tree, const char *src, int depth) {
-  TSNode root = ts_tree_root_node(tree);
-  debug_tree_node(root, src, depth);
 }
 
 typedef struct {
@@ -282,9 +328,10 @@ static void walk(WalkContext *const ctx, LocalContext local, TSNode node,
       TSTree *tree =
           ts_parser_parse_string(cparser, NULL, out_sb.items, out_sb.count);
       TSNode root = ts_tree_root_node(tree);
-      printf("\n-----------------------------------------------\n");
+      printf("\n------------[GOING IN]--->\n");
+      debug_tree(tree, out_sb.items, depth);
       walk(ctx, local, root, out_sb.items, depth + 4);
-      printf("\n-----------------------------------------------\n");
+      printf("\n^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^\n");
       return;
     }
     break;
@@ -393,9 +440,14 @@ static void walk(WalkContext *const ctx, LocalContext local, TSNode node,
 
       if (ts_node_is_comptime_kw(node, src) && local.call_expression_root) {
         TSNode argument_list = ts_node_child(*local.call_expression_root, 1);
+        printf("\n---->\n");
+        debug_tree_node(argument_list, src, 4);
+        printf("\n<----\n");
         assert(ts_node_symbol(argument_list) == sym_argument_list);
         // the code to execute is within the argument_list:
         String_View _comptime_code = ts_node_to_str_view(argument_list, src);
+        nob_log(INFO, "@@@@ @@@\n %.*s \n@@@ @@@", (int)_comptime_code.count,
+                _comptime_code.data);
         assert(_comptime_code.data[0] == '(');
         printf("\n\n\n\n----> %c\n\n\n\n",
                _comptime_code.data[_comptime_code.count - 1]);
@@ -419,16 +471,25 @@ static void walk(WalkContext *const ctx, LocalContext local, TSNode node,
 
         // call the function in the main;
 
-        nob_sb_appendf(
-            &ctx->runner.definitions,
-            "\nchar* _Comptime__exec%d(void){\n%.*s;\nreturn NULL;}\n",
-            ctx->comptime_count, (int)(end - start + 1), start);
+        nob_sb_appendf(&ctx->runner.definitions,
+                       "\n__Comptime_Statement_Fn(%d, %.*s)\n",
+                       ctx->comptime_count, (int)(end - start + 1), start);
 
         nob_sb_appendf(&ctx->runner.main,
-                       "_Register_Comptime_exec(_Comptime__exec%d(), %d); // "
+                       "__Comptime_Register_Main_Exec(%d); // "
                        "execute comptime statement #%d\n",
-                       ctx->comptime_count, ctx->comptime_count,
-                       ctx->comptime_count);
+                       ctx->comptime_count, ctx->comptime_count);
+
+        // nob_sb_appendf(
+        //     &ctx->runner.definitions,
+        //     "\nchar* _Comptime__exec%d(void){\n%.*s;\nreturn NULL;}\n",
+        //     ctx->comptime_count, (int)(end - start + 1), start);
+
+        // nob_sb_appendf(&ctx->runner.main,
+        //                "_Register_Comptime_exec(_Comptime__exec%d(), %d); //
+        //                " "execute comptime statement #%d\n",
+        //                ctx->comptime_count, ctx->comptime_count,
+        //                ctx->comptime_count);
       }
 
       ctx->comptime_count++;
@@ -504,7 +565,11 @@ int run_file(Context *ctx) {
   //            ctx->gen_header_path, (int)walk_ctx.runner.main.count,
   //            walk_ctx.runner.main.items);
 
-  // write_entire_file(ctx->runner_cpath, runner_file.items, runner_file.count);
+  write_entire_file(ctx->runner_main_path, walk_ctx.runner.main.items,
+                    walk_ctx.runner.main.count);
+
+  write_entire_file(ctx->runner_defs_path, walk_ctx.runner.definitions.items,
+                    walk_ctx.runner.definitions.count);
 
   write_entire_file(ctx->gen_header_path, walk_ctx.out_h.items,
                     walk_ctx.out_h.count);
@@ -557,7 +622,7 @@ int main(int argc, char **argv) {
 
     run_file(&ctx);
 
-    assert(ctx.runner_cpath);
+    assert(ctx.runner_templ_path);
     Nob_Cmd cmd = {0};
 
     nob_cmd_append(&cmd, Parsed_Argv_compiler_name(ctx.parsed_argv));
@@ -580,17 +645,21 @@ int main(int argc, char **argv) {
     nob_cmd_append(
         &cmd, "-o", ctx.runner_exepath,
         temp_sprintf("-D_INPUT_PROGRAM_PATH=\"%s\"", ctx.input_path),
-        temp_sprintf("-D_OUTPUT_HEADERS_PATH=\"%s\"", ctx.gen_header_path), );
+        temp_sprintf("-D_INPUT_COMPTIME_DEFS_PATH=\"%s\"",
+                     ctx.runner_defs_path),
+        temp_sprintf("-D_INPUT_COMPTIME_MAIN_PATH=\"%s\"",
+                     ctx.runner_main_path),
+        temp_sprintf("-D_OUTPUT_HEADERS_PATH=\"%s\"", ctx.gen_header_path));
 
     if (!nob_cmd_run(&cmd)) {
-      nob_log(ERROR, "failed to compile runner %s", ctx.runner_cpath);
+      nob_log(ERROR, "failed to compile runner %s", ctx.runner_templ_path);
       exit(1);
     }
 
     nob_log(INFO, "Running runner %s", ctx.runner_exepath);
     nob_cmd_append(&cmd, nob_temp_sprintf("./%s", ctx.runner_exepath));
     if (!nob_cmd_run(&cmd)) {
-      nob_log(ERROR, "failed to run runner %s", ctx.runner_cpath);
+      nob_log(ERROR, "failed to run runner %s", ctx.runner_templ_path);
       exit(1);
     }
 
@@ -623,7 +692,7 @@ int main(int argc, char **argv) {
 
     // log_info("Scheduling intermediate files for deletion");
     da_append(&files_to_remove, ctx.preprocessed_path);
-    da_append(&files_to_remove, ctx.runner_cpath);
+    da_append(&files_to_remove, ctx.runner_templ_path);
     da_append(&files_to_remove, ctx.runner_exepath);
     da_append(&files_to_remove, ctx.vals_path);
     da_append(&files_to_remove, ctx.final_out_path);

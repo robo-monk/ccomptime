@@ -70,8 +70,12 @@ typedef struct {
 
   const char *input_path;
   const char *preprocessed_path;
-  const char *runner_cpath;
+
+  const char *runner_templ_path;
   const char *runner_exepath;
+  const char *runner_defs_path;
+  const char *runner_main_path;
+
   const char *vals_path;
   const char *final_out_path;
   const char *gen_header_path;
@@ -99,7 +103,10 @@ char *leaky_sprintf(const char *fmt, ...) {
 static void Context_fill_paths(Context *ctx, const char *original_source) {
   ctx->preprocessed_path =
       leaky_sprintf("%sct-preprocessed.i", original_source);
-  ctx->runner_cpath = leaky_sprintf("%sct-runner.c", original_source);
+  ctx->runner_templ_path = leaky_sprintf("%sct-runner.c", original_source);
+  ctx->runner_defs_path = leaky_sprintf("%sc-runner-defs.c", original_source);
+  ctx->runner_main_path = leaky_sprintf("%sc-runner-main.c", original_source);
+
 #ifdef _WIN32
   ctx->runner_exepath = leaky_sprintf("%sct-runner.exe", original_source);
 #else
