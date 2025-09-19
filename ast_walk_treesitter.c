@@ -1,4 +1,6 @@
 #include "ansi.h"
+#include "utils.h"
+
 #include <stddef.h>
 #define HASHMAP_IMPLEMENTATION
 #include "deps/hashmap/hashmap.h"
@@ -15,39 +17,13 @@
 #include <string.h>
 #include <time.h>
 
-#define fatal(s)                                                               \
-  fflush(stdout);                                                              \
-  printf("\n" RED("[FATAL] "s                                                  \
-                  "\n"));                                                      \
-  exit(1);
-
 extern const TSLanguage *tree_sitter_c(void);
 
 TSParser *cparser;
 
 typedef struct {
-  String_View *items;
-  size_t count, capacity;
-} Strings;
-
-void strings_append(Strings *strings, String_View item) {
-  nob_da_append(strings, item);
-}
-
-Strings strings_new(size_t capacity) {
-  Strings strings = {.count = 0,
-                     .capacity = capacity,
-                     .items = malloc(sizeof(String_View) * capacity)};
-  return strings;
-}
-
-typedef struct {
   TSNode identifier;
   Strings arg_names;
-  // TSNode body;
-  //
-  // const char *src;
-
   TSTree *body_tree;
   const char *body_src;
 
@@ -243,7 +219,6 @@ typedef struct {
   TSNode *preproc_def_root;
   TSNode *call_expression_root;
   // TSNode *preproc_func_def_root;
-  bool is_within_compound;
   int child_idx;
 } LocalContext;
 static void walk(WalkContext *const ctx, LocalContext local, TSNode node,
@@ -388,11 +363,6 @@ static void walk(WalkContext *const ctx, LocalContext local, TSNode node,
                ts_node_range(macro->identifier, src).len, macro);
     return;
   }
-
-    // return;
-  case 241: // compound_statement
-    local.is_within_compound = true;
-    break;
   }
 
   // Print token text for identifiers (best-effort)
@@ -417,7 +387,7 @@ static void walk(WalkContext *const ctx, LocalContext local, TSNode node,
       } else {
         nob_sb_appendf(
             &ctx->out_h,
-            "#define _PLACEHOLDER_COMPTIME_X_%d\nvoid _cct_fn_%d(void)\n",
+            "#define _PLACEHOLDER_COMPTIME_X%d(x)/* comptime block %d */\n",
             ctx->comptime_count, ctx->comptime_count);
       }
 
@@ -498,42 +468,44 @@ int run_file(Context *ctx) {
 
   printf("\n\nGenerated header:\n%s\n", walk_ctx.out_h.items);
 
-  String_Builder runner_file = {0};
+  // String_Builder runner_file = {0};
 
-  sb_appendf(&runner_file, "#include <string.h>\n#define _InlineC strdup\n");
-  sb_appendf(&runner_file,
-             "#include <stdlib.h>\n"
-             "#include <stdio.h>\n"
-             "static FILE *headers_file;\n"
-             "void _Register_Comptime_exec(char *exe_result, int index) {\n"
-             "  fprintf(headers_file, \"#define _COMPTIME_X%%d(x) %%s\\n\", "
-             "index, exe_result ? exe_result : \"/*void block*/\"); // appends "
-             "text at the end\n"
-             "}\n");
+  // sb_appendf(&runner_file, "#include <string.h>\n#define _InlineC strdup\n");
+  // sb_appendf(&runner_file,
+  //            "#include <stdlib.h>\n"
+  //            "#include <stdio.h>\n"
+  //            "static FILE *_Comptime_FP;\n"
+  //            "void _Register_Comptime_exec(char *exe_result, int index) {\n"
+  //            "  fprintf(_Comptime_FP, \"#define _COMPTIME_X%%d(x) %%s\\n\", "
+  //            "index, exe_result ? exe_result : \"/*void block*/\"); //
+  //            appends " "text at the end\n"
+  //            "}\n");
 
-  sb_appendf(&runner_file, "#define main _User_main // overwriting the entry "
-                           "point of the program\n");
-  sb_appendf(&runner_file, "#define _COMPTIME_X(n, x)\n");
-  sb_appendf(&runner_file, "#include \"%s\"\n", ctx->input_path);
-  sb_appendf(&runner_file, "#undef main\n");
-  sb_appendf(&runner_file, "#undef _COMPTIME_X\n");
+  // sb_appendf(&runner_file, "#define main _User_main // overwriting the entry
+  // "
+  //                          "point of the program\n");
+  // // sb_appendf(&runner_file, "#define _COMPTIME_X(n, x)\n");
+  // sb_appendf(&runner_file, "#include \"%s\"\n", ctx->input_path);
+  // sb_appendf(&runner_file, "#undef main\n");
+  // // sb_appendf(&runner_file, "#undef _COMPTIME_X\n");
 
-  sb_append_buf(&runner_file, walk_ctx.runner.definitions.items,
-                walk_ctx.runner.definitions.count);
+  // sb_append_buf(&runner_file, walk_ctx.runner.definitions.items,
+  //               walk_ctx.runner.definitions.count);
 
-  sb_appendf(
-      &runner_file,
-      "\nint main(void) {\n"
-      "headers_file = fopen(\"%s\", "
-      "\"a\");if(!headers_file){perror(\"fopen\");return 1;}\n"
-      "\n%.*s\n"
-      "fprintf(headers_file, \"#undef _COMPTIME_X\\n#define _COMPTIME_X(n, x) "
-      "CONCAT(_COMPTIME_X, n)(x)\\n\");\n"
-      "fclose(headers_file);\n}",
-      ctx->gen_header_path, (int)walk_ctx.runner.main.count,
-      walk_ctx.runner.main.items);
+  // sb_appendf(&runner_file,
+  //            "\nint main(void) {\n"
+  //            "_Comptime_FP = fopen(\"%s\", "
+  //            "\"a\");if(!_Comptime_FP){perror(\"fopen\");return 1;}\n"
+  //            "\n%.*s\n"
+  //            "fprintf(_Comptime_FP, \"#undef _COMPTIME_X\\n#define "
+  //            "_COMPTIME_X(n, x) "
+  //            "CONCAT(_COMPTIME_X, n)(x)\\n\");\n"
+  //            "fclose(_Comptime_FP);\n}",
+  //            ctx->gen_header_path, (int)walk_ctx.runner.main.count,
+  //            walk_ctx.runner.main.items);
 
-  write_entire_file(ctx->runner_cpath, runner_file.items, runner_file.count);
+  // write_entire_file(ctx->runner_cpath, runner_file.items, runner_file.count);
+
   write_entire_file(ctx->gen_header_path, walk_ctx.out_h.items,
                     walk_ctx.out_h.count);
 
@@ -594,16 +566,21 @@ int main(int argc, char **argv) {
     nob_cmd_append(&cmd, "-O0");
 
     cmd_append_inputs_except(ctx.parsed_argv, ctx.input_path, &cmd);
-    nob_cmd_append(&cmd, ctx.runner_cpath);
+
+    // nob_cmd_append(&cmd, ctx.runner_cpath);
+    nob_cmd_append(&cmd, "runner.templ.c");
 
     if (!(ctx.parsed_argv->cct_flags & CliComptimeFlag_Debug)) {
       nob_cmd_append(&cmd, "-w");
     } else {
-      nob_cmd_append(&cmd, "-g", "-fsanitize=address",
+      nob_cmd_append(&cmd, "-g", "-fsanitize=address,undefined",
                      "-fno-omit-frame-pointer");
     }
 
-    nob_cmd_append(&cmd, "-o", ctx.runner_exepath);
+    nob_cmd_append(
+        &cmd, "-o", ctx.runner_exepath,
+        temp_sprintf("-D_INPUT_PROGRAM_PATH=\"%s\"", ctx.input_path),
+        temp_sprintf("-D_OUTPUT_HEADERS_PATH=\"%s\"", ctx.gen_header_path), );
 
     if (!nob_cmd_run(&cmd)) {
       nob_log(ERROR, "failed to compile runner %s", ctx.runner_cpath);
