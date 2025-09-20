@@ -56,15 +56,27 @@ NodeRange ts_node_range(TSNode node, const char *src) {
   return (NodeRange){start, len};
 }
 
+static bool ts_node_is_comptime_kw(TSNode node, const char *src);
+
 // static void debug_tree
 static void debug_tree_node(TSNode node, const char *src, int depth) {
-
+#define MIN(x, y) x > y ? y : x
   for (unsigned i = 0; i < depth; i++)
-    putchar(' ');
+    putchar('.');
 
-  printf("- [%s] (%d)", ts_node_type(node), ts_node_symbol(node));
+  if (ts_node_has_error(node)) {
+    // printf(RED("- (%d)"), ts_node_symbol(node));
+    printf(RED("[%s] (%d)"), ts_node_type(node), ts_node_symbol(node));
+  } else if (ts_node_symbol(node) == sym_identifier &&
+             ts_node_is_comptime_kw(node, src)) {
+    printf(BLUE(" [%s] (%d) [_Comptime]"), ts_node_type(node),
+           ts_node_symbol(node));
+  } else {
+    printf(BOLD("%s") " " GRAY("[%d]"), ts_node_type(node),
+           ts_node_symbol(node));
+  }
 
-  printf("  // %.*s", ts_node_range(node, src).len,
+  printf(GRAY(" %.*s"), MIN(ts_node_range(node, src).len, 35),
          ts_node_range(node, src).start);
 
   putchar('\n');
@@ -512,6 +524,7 @@ int run_file(Context *ctx) {
   TSTree *tree = ts_parser_parse_string(cparser, NULL, ctx->raw_source->items,
                                         ctx->raw_source->count);
 
+  debug_tree(tree, ctx->raw_source->items, 0);
   TSNode root = ts_tree_root_node(tree);
   WalkContext walk_ctx = (WalkContext){0};
   sb_appendf(&walk_ctx.out_h,
@@ -528,42 +541,6 @@ int run_file(Context *ctx) {
   printf("comptime found : %d", walk_ctx.comptime_count);
 
   printf("\n\nGenerated header:\n%s\n", walk_ctx.out_h.items);
-
-  // String_Builder runner_file = {0};
-
-  // sb_appendf(&runner_file, "#include <string.h>\n#define _InlineC strdup\n");
-  // sb_appendf(&runner_file,
-  //            "#include <stdlib.h>\n"
-  //            "#include <stdio.h>\n"
-  //            "static FILE *_Comptime_FP;\n"
-  //            "void _Register_Comptime_exec(char *exe_result, int index) {\n"
-  //            "  fprintf(_Comptime_FP, \"#define _COMPTIME_X%%d(x) %%s\\n\", "
-  //            "index, exe_result ? exe_result : \"/*void block*/\"); //
-  //            appends " "text at the end\n"
-  //            "}\n");
-
-  // sb_appendf(&runner_file, "#define main _User_main // overwriting the entry
-  // "
-  //                          "point of the program\n");
-  // // sb_appendf(&runner_file, "#define _COMPTIME_X(n, x)\n");
-  // sb_appendf(&runner_file, "#include \"%s\"\n", ctx->input_path);
-  // sb_appendf(&runner_file, "#undef main\n");
-  // // sb_appendf(&runner_file, "#undef _COMPTIME_X\n");
-
-  // sb_append_buf(&runner_file, walk_ctx.runner.definitions.items,
-  //               walk_ctx.runner.definitions.count);
-
-  // sb_appendf(&runner_file,
-  //            "\nint main(void) {\n"
-  //            "_Comptime_FP = fopen(\"%s\", "
-  //            "\"a\");if(!_Comptime_FP){perror(\"fopen\");return 1;}\n"
-  //            "\n%.*s\n"
-  //            "fprintf(_Comptime_FP, \"#undef _COMPTIME_X\\n#define "
-  //            "_COMPTIME_X(n, x) "
-  //            "CONCAT(_COMPTIME_X, n)(x)\\n\");\n"
-  //            "fclose(_Comptime_FP);\n}",
-  //            ctx->gen_header_path, (int)walk_ctx.runner.main.count,
-  //            walk_ctx.runner.main.items);
 
   write_entire_file(ctx->runner_main_path, walk_ctx.runner.main.items,
                     walk_ctx.runner.main.count);

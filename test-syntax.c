@@ -30,15 +30,36 @@ void _polymorphic_add(_ComptimeCtx _ComptimeCtx, const char *t, const char *a,
 #define add(type, a, b)                                                        \
   _Comptime(_polymorphic_add(_ComptimeCtx, #type, #a, #b));
 
+union {
+  int a;
+  float b;
+} my_union;
+
+void _polymorphic_result(_ComptimeCtx _ComptimeCtx, const char *t,
+                         const char *e) {
+  const char *struct_sign =
+      nob_temp_sprintf("typedef struct { union {%s value; %s error;} as; bool "
+                       "is_ok; } Result_%s_%s;",
+                       t, e, t, e);
+
+  if (!hashmap_get(&_func_defs, (char *)struct_sign)) {
+    hashmap_put(&_func_defs, (char *)struct_sign, (void *)1);
+    printf("\n ~~ Generating struct sign %s\n", struct_sign);
+    fprintf(_Comptime_FP, "\n%s\n", struct_sign);
+  }
+
+  _ComptimeCtx.Inline.appendf("Result_%s_%s", t, e);
+}
+
+#define Result(T, E) _Comptime(_polymorphic_result(_ComptimeCtx, #T, #E))
+
 int fib(int n) {
   if (n <= 1)
     return n;
   return fib(n - 1) + fib(n - 2);
 }
 
-// int ass = comptime{5};
-// int ass2 = comptime 10;
-// _Comptime({fprintf(_Comptime_FP, "\n#include <stdio.h>\n")});
+Result(int, int) test5() { return {.is_ok = true, .value = 5}; }
 
 int main() {
   // comptime_log("~> Hello, World!");
@@ -53,7 +74,7 @@ int main() {
   //   // return _InlineC(output);
   // });
 
-  int m = add(int, 5, 10);
+  // int m = add(int, 5, 10);
 }
 // #define test1 x
 // #define test3(...) \
