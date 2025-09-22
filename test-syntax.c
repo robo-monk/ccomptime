@@ -53,13 +53,13 @@ void _polymorphic_result(_ComptimeCtx _ComptimeCtx, const char *t,
 
 #define Result(T, E) _ComptimeType(_polymorphic_result(_ComptimeCtx, #T, #E))
 
+Result(int, int) test5() { return {.is_ok = true, .value = 5}; }
+
 int fib(int n) {
   if (n <= 1)
     return n;
   return fib(n - 1) + fib(n - 2);
 }
-
-Result(int, int) test5() { return {.is_ok = true, .value = 5}; }
 
 int main() {
   // comptime_log("~> Hello, World!");

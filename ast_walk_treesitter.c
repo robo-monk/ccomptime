@@ -146,6 +146,7 @@ static NodeRange _VOID_RANGE = _STATIC_TYPE_RANGE("void");
 static NodeRange _INT_RANGE = _STATIC_TYPE_RANGE("int");
 static NodeRange _CHARPTR_RANGE = _STATIC_TYPE_RANGE("char*");
 static NodeRange _CHAR_RANGE = _STATIC_TYPE_RANGE("char");
+static NodeRange _VOIDPTR_RANGE = _STATIC_TYPE_RANGE("void*");
 
 NodeRange infer_func_type_from_ret(TSNode node, const char *src) {
   assert(ts_node_symbol(node) == sym_function_definition);
@@ -176,6 +177,9 @@ NodeRange infer(TSNode node, const char *src) {
     } else {
       return infer(type_node, src);
     }
+  case alias_sym_type_identifier:
+    return _VOIDPTR_RANGE;
+    // return ts_node_range(node, src);
   case sym_number_literal:
     return _INT_RANGE;
   case sym_char_literal:
@@ -487,8 +491,7 @@ static void walk(WalkContext *const ctx, LocalContext local, TSNode node,
   }
 
   case sym_function_definition: { // function_definition
-    NodeRange r = infer(node, src);
-    printf(MAGENTA("!INFERED! :: %.*s"), r.len, r.start);
+
     local.function_definition_root = &node;
     break;
   }
@@ -543,13 +546,18 @@ static void walk(WalkContext *const ctx, LocalContext local, TSNode node,
     TSTree *tree = ts_parser_parse_string(cparser, NULL,
                                           ts_node_start_len_tuple(body, src));
 
-    if (!has_comptime_identifier(tree, ts_node_range(body, src).start)) {
+    if (!has_comptime_identifier(tree, ts_node_range(body, src).start) &&
+        !hashmap_get2(&ctx->macros,
+                      (char *)ts_node_range(macro->identifier, src).start,
+                      ts_node_range(macro->identifier, src).len)) {
       nob_log(INFO,
               "'%.*s' macro has been proven irrelevant because it does not "
               "contain the `_Comptime` keyword",
               ts_node_len_start_tuple(macro->identifier, src));
     } else {
-      nob_log(INFO, "'%.*s' macro is a *comptime* macro ",
+      nob_log(INFO,
+              "'%.*s' macro is a *comptime* macro or contains another "
+              "*comptime* macro",
               ts_node_len_start_tuple(macro->identifier, src));
     }
 
@@ -586,6 +594,8 @@ static void walk(WalkContext *const ctx, LocalContext local, TSNode node,
           fatal("Redefining `_ComptimeType` macro is not supported");
         }
       }
+
+      // sometimes tree sitter misparses
       fatal("Invalid use of _ComptimeType (found _ComptimeType outside of a "
             "call expression)");
     }
@@ -595,7 +605,8 @@ static void walk(WalkContext *const ctx, LocalContext local, TSNode node,
 
       assert(local.function_definition_root);
       NodeRange inferred_type = infer(*local.function_definition_root, src);
-
+      printf(MAGENTA("!INFERED! :: %.*s"), inferred_type.len,
+             inferred_type.start);
       printf(ORANGE("  [contains '_ComptimeType'] (%d)"), ctx->comptime_count);
 
       // FIRST PASS REPLACE THE SEMANTIC VALUE WITH A PLACEHOLDER
