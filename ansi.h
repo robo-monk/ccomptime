@@ -6,6 +6,11 @@
 #define BLUE(s) ANSI_WRAP("34", s)
 #define GREEN(s) ANSI_WRAP("32", s)
 #define GRAY(s) ANSI_WRAP("90", s) // bright black = gray
+#define ORANGE(s) ANSI_WRAP("33", s)
+#define YELLOW(s) ANSI_WRAP("33", s)
+#define PURPLE(s) ANSI_WRAP("35", s)
+#define CYAN(s) ANSI_WRAP("36", s)
+#define MAGENTA(s) ANSI_WRAP("35", s)
 #define BOLD(s) ANSI_WRAP("1", s)
 
 // Printf-style: use like printf(REDF("Error: %s\n"), msg);

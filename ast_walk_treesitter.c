@@ -17,6 +17,8 @@
 #include <string.h>
 #include <time.h>
 
+#include "inference.c"
+
 extern const TSLanguage *tree_sitter_c(void);
 
 TSParser *cparser;
@@ -57,6 +59,7 @@ NodeRange ts_node_range(TSNode node, const char *src) {
 }
 
 static bool ts_node_is_comptime_kw(TSNode node, const char *src);
+static bool ts_node_is_comptimetype_kw(TSNode node, const char *src);
 
 // static void debug_tree
 static void debug_tree_node(TSNode node, const char *src, int depth) {
@@ -69,7 +72,11 @@ static void debug_tree_node(TSNode node, const char *src, int depth) {
     printf(RED("[%s] (%d)"), ts_node_type(node), ts_node_symbol(node));
   } else if (ts_node_symbol(node) == sym_identifier &&
              ts_node_is_comptime_kw(node, src)) {
-    printf(BLUE(" [%s] (%d) [_Comptime]"), ts_node_type(node),
+    printf(MAGENTA(" [%s] (%d) [_Comptime]"), ts_node_type(node),
+           ts_node_symbol(node));
+  } else if (ts_node_symbol(node) == sym_identifier &&
+             ts_node_is_comptimetype_kw(node, src)) {
+    printf(ORANGE(" [%s] (%d) [_ComptimeType]"), ts_node_type(node),
            ts_node_symbol(node));
   } else {
     printf(BOLD("%s") " " GRAY("[%d]"), ts_node_type(node),
@@ -79,7 +86,7 @@ static void debug_tree_node(TSNode node, const char *src, int depth) {
   printf(GRAY(" %.*s"), MIN(ts_node_range(node, src).len, 35),
          ts_node_range(node, src).start);
 
-  putchar('\n');
+  printf(GRAY(" [%p]\n"), node.id);
 
   uint32_t n = ts_node_child_count(node);
   for (uint32_t i = 0; i < n; i++) {
@@ -112,6 +119,80 @@ String_View ts_node_to_str_view(TSNode node, const char *src) {
   int len = ts_node_end_byte(node) - ts_node_start_byte(node);
   return (String_View){.data = start, .count = len};
 }
+
+/* INFERENCE */
+NodeRange infer(TSNode node, const char *src);
+
+TSNode *dig_until_return(TSNode node) {
+  if (ts_node_symbol(node) == sym_return_statement) {
+    static TSNode found_node;
+    found_node = node;
+    return &found_node;
+  }
+  uint32_t n = ts_node_child_count(node);
+  for (uint32_t i = 0; i < n; i++) {
+    TSNode child = ts_node_child(node, i);
+    TSNode *result = dig_until_return(child);
+    if (result)
+      return result;
+  }
+  return NULL;
+}
+
+#define _STATIC_TYPE_RANGE(type)                                               \
+  { .start = type, .len = strlen(type) }
+
+static NodeRange _VOID_RANGE = _STATIC_TYPE_RANGE("void");
+static NodeRange _INT_RANGE = _STATIC_TYPE_RANGE("int");
+static NodeRange _CHARPTR_RANGE = _STATIC_TYPE_RANGE("char*");
+static NodeRange _CHAR_RANGE = _STATIC_TYPE_RANGE("char");
+
+NodeRange infer_func_type_from_ret(TSNode node, const char *src) {
+  assert(ts_node_symbol(node) == sym_function_definition);
+  TSNode *ret_node = dig_until_return(node);
+  if (!ret_node) {
+    return _VOID_RANGE;
+  }
+  assert(ts_node_symbol(*ret_node) == sym_return_statement);
+  assert(ts_node_symbol(ts_node_child(*ret_node, 0)) == anon_sym_return);
+  return infer(ts_node_child(*ret_node, 1), src);
+}
+
+NodeRange infer(TSNode node, const char *src) {
+
+  printf("\n--- Inference on node: ");
+  debug_tree_node(node, src, 0);
+  printf("\n---\n");
+  switch (ts_node_symbol(node)) {
+  case sym_primitive_type:
+    return ts_node_range(node, src);
+  case sym_function_definition: {
+    assert(ts_node_child_count(node) > 0);
+    TSNode type_node = ts_node_child(node, 0);
+    if (ts_node_symbol(type_node) == sym_macro_type_specifier &&
+        ts_node_is_comptimetype_kw(ts_node_child(type_node, 0), src)) {
+      // we need to dig
+      return infer_func_type_from_ret(node, src);
+    } else {
+      return infer(type_node, src);
+    }
+  case sym_number_literal:
+    return _INT_RANGE;
+  case sym_char_literal:
+    return _CHAR_RANGE;
+  case sym_concatenated_string:
+  case sym_string_literal:
+    return _CHARPTR_RANGE;
+
+  default: {
+    printf("\nUnknown symbol: %d ('%s')\n", ts_node_symbol(node),
+           ts_node_type(node));
+    exit(1);
+  }
+  }
+  }
+}
+/* --------- */
 
 typedef struct {
   TSNode node;
@@ -245,6 +326,13 @@ static void expand_macro_tree(MacroDefinition *macro_def, Strings arg_values,
   // }
 }
 
+static bool ts_node_is_comptimetype_kw(TSNode node, const char *src) {
+  assert(ts_node_symbol(node) == sym_identifier);
+  return strlen("_ComptimeType") == ts_node_range(node, src).len &&
+         memcmp(ts_node_range(node, src).start, "_ComptimeType",
+                ts_node_range(node, src).len) == 0;
+}
+
 static bool ts_node_is_comptime_kw(TSNode node, const char *src) {
   assert(ts_node_symbol(node) == sym_identifier);
   return strlen("_Comptime") == ts_node_range(node, src).len &&
@@ -254,7 +342,8 @@ static bool ts_node_is_comptime_kw(TSNode node, const char *src) {
 
 static bool _has_comptime_identifier(TSNode node, const char *src) {
   if (ts_node_symbol(node) == sym_identifier) {
-    return ts_node_is_comptime_kw(node, src);
+    return ts_node_is_comptime_kw(node, src) ||
+           ts_node_is_comptimetype_kw(node, src);
   }
 
   uint32_t n = ts_node_child_count(node);
@@ -271,12 +360,60 @@ static bool has_comptime_identifier(TSTree *tree, const char *src) {
   return _has_comptime_identifier(ts_tree_root_node(tree), src);
 }
 
+void parse_comptime_call_expr(WalkContext *const ctx,
+                              TSNode call_expression_root, const char *src) {
+  assert(ts_node_symbol(call_expression_root) == sym_call_expression);
+  TSNode argument_list = ts_node_child(call_expression_root, 1);
+
+  printf("\n---->\n");
+  debug_tree_node(argument_list, src, 4);
+  printf("\n<----\n");
+  assert(ts_node_symbol(argument_list) == sym_argument_list);
+  // the code to execute is within the argument_list:
+  String_View _comptime_code = ts_node_to_str_view(argument_list, src);
+  assert(_comptime_code.count > 2 && "Empty _Comptime are not allowed");
+  nob_log(INFO, "@@@@(%zu)@@@\n %.*s \n@@@ @@@", _comptime_code.count,
+          (int)_comptime_code.count, _comptime_code.data);
+  assert(_comptime_code.data[0] == '(');
+  printf("\n\n\n\n----> %c\n\n\n\n",
+         _comptime_code.data[_comptime_code.count - 1]);
+  assert(_comptime_code.data[_comptime_code.count - 1] == ')');
+  // assert(true);
+
+  char *start = (char *)_comptime_code.data + 1; // skip the initial paren;
+  char *end = (char *)_comptime_code.data + _comptime_code.count - 2;
+
+  // trim initial white space
+  while (*start == ' ' || *start == '\t' || *start == '{') {
+    start++;
+  }
+  while (*end == ' ' || *end == '\t' || *end == '}' || *end == ';') {
+    end--;
+  }
+
+  nob_log(INFO, "\n=== FOUND _Comptime CODE ===\n%.*s\n=============",
+          (int)(end - start + 1), start);
+
+  // call the function in the main;
+
+  nob_sb_appendf(&ctx->runner.definitions,
+                 "\n__Comptime_Statement_Fn(%d, %.*s)\n", ctx->comptime_count,
+                 (int)(end - start + 1), start);
+
+  nob_sb_appendf(&ctx->runner.main,
+                 "__Comptime_Register_Main_Exec(%d); // "
+                 "execute comptime statement #%d\n",
+                 ctx->comptime_count, ctx->comptime_count);
+
+  ctx->comptime_count++;
+}
+
 typedef struct {
-  bool is_inside_function_body;
   bool is_assigning_to_var;
   TSNode *preproc_def_root;
   TSNode *call_expression_root;
-  // TSNode *preproc_func_def_root;
+  TSNode *macro_type_specifier_root;
+  TSNode *function_definition_root;
   int child_idx;
 } LocalContext;
 static void walk(WalkContext *const ctx, LocalContext local, TSNode node,
@@ -340,27 +477,34 @@ static void walk(WalkContext *const ctx, LocalContext local, TSNode node,
       TSTree *tree =
           ts_parser_parse_string(cparser, NULL, out_sb.items, out_sb.count);
       TSNode root = ts_tree_root_node(tree);
-      printf("\n------------[GOING IN]--->\n");
+      printf("\n------------[GOING IN THE MACRO TREE]--->\n");
       debug_tree(tree, out_sb.items, depth);
       walk(ctx, local, root, out_sb.items, depth + 4);
-      printf("\n^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^ ^\n");
+      printf("\n^ ^ ^ ^ ^ ^ ^ ^ DONE ^ ^ ^ ^ ^ ^\n");
       return;
     }
     break;
   }
 
-  case sym_function_definition: // function_definition
-    local.is_inside_function_body = true;
+  case sym_function_definition: { // function_definition
+    NodeRange r = infer(node, src);
+    printf(MAGENTA("!INFERED! :: %.*s"), r.len, r.start);
+    local.function_definition_root = &node;
     break;
+  }
   case sym_init_declarator: // init_declarator
     local.is_assigning_to_var = true;
     break;
-  case 165: // preproc_def
+  case sym_preproc_def: // preproc_def
     local.preproc_def_root = &node;
+    break;
+  case sym_macro_type_specifier:
+    local.macro_type_specifier_root = &node;
     break;
   case sym_call_expression: /* call exresssion */
     local.call_expression_root = &node;
     break;
+
   case sym_preproc_function_def: {
 
     // MacroDefinition macro = {0};
@@ -424,21 +568,95 @@ static void walk(WalkContext *const ctx, LocalContext local, TSNode node,
   }
   }
 
-  // Print token text for identifiers (best-effort)
   if (sym == sym_identifier) {
     printf(" ~~");
-    if (ts_node_is_comptime_kw(node, src)) {
-      printf(BLUE("  [contains '_Comptime'] (%d)"), ctx->comptime_count);
+    if (ts_node_is_comptime_kw(node, src) && !local.call_expression_root) {
       if (local.preproc_def_root) {
         if (local.child_idx == 1) {
           fatal("Redefining `_Comptime` macro is not supported");
         }
       }
+      fatal("Invalid use of _Comptime");
+    }
 
+    if (ts_node_is_comptimetype_kw(node, src) &&
+        !local.macro_type_specifier_root) {
+      if (local.preproc_def_root) {
+        if (local.child_idx == 1) {
+          fatal("Redefining `_ComptimeType` macro is not supported");
+        }
+      }
+      fatal("Invalid use of _ComptimeType (found _ComptimeType outside of a "
+            "call expression)");
+    }
+
+    if (ts_node_is_comptimetype_kw(node, src) &&
+        local.macro_type_specifier_root) {
+
+      assert(local.function_definition_root);
+      NodeRange inferred_type = infer(*local.function_definition_root, src);
+
+      printf(ORANGE("  [contains '_ComptimeType'] (%d)"), ctx->comptime_count);
+
+      // FIRST PASS REPLACE THE SEMANTIC VALUE WITH A PLACEHOLDER
+      nob_sb_appendf(
+          &ctx->out_h, "\n#define _PLACEHOLDER_COMPTIME_X%d(x) %.*s\n",
+          ctx->comptime_count, inferred_type.len, inferred_type.start);
+
+      // LOOK AHEAD, WHERE ARE WE?
+      assert(ts_node_symbol(ts_node_child(*local.macro_type_specifier_root,
+                                          0)) == sym_identifier);
+
+      NodeRange _ComptimeTypeIdentifierRange = ts_node_range(
+          ts_node_child(*local.macro_type_specifier_root, 0), src);
+
+      NodeRange range = ts_node_range(*local.macro_type_specifier_root, src);
+
+      // parsed range
+      NodeRange parsed_range = (NodeRange){
+          .start = _ComptimeTypeIdentifierRange.start +
+                   _ComptimeTypeIdentifierRange.len +
+                   1, // +1 to skip the 1st parenthesis
+          .len = range.len - _ComptimeTypeIdentifierRange.len -
+                 2, // -2 to compensate for 1st and last paren
+      };
+
+      printf("~> parsed range is %.*s\n", parsed_range.len, parsed_range.start);
+
+      nob_sb_appendf(&ctx->runner.definitions,
+                     "\n__Comptime_Statement_Fn(%d, %.*s)\n",
+                     ctx->comptime_count, parsed_range.len, parsed_range.start);
+
+      nob_sb_appendf(&ctx->runner.main,
+                     "__Comptime_Register_Main_Exec(%d); // "
+                     "execute comptime statement #%d\n",
+                     ctx->comptime_count, ctx->comptime_count);
+      ctx->comptime_count++;
+
+      // range.start = _ComptimeTypeIdentifierRange.start;
+
+      // assert(ts_node_symbol(ts_node_child(*local.macro_type_specifier_root,
+      //                                     1)) == anon_sym_LPAREN);
+
+      // assert(ts_node_symbol(ts_node_child(*local.macro_type_specifier_root,
+      //                                     1)) == anon_sym_RPAREN);
+      // TSNode next =
+      // ts_node_next_sibling(ts_node_parent(*local.call_expression_root));
+      // nob_log(INFO, "Next node after ComptimeType is");
+      // debug_tree_node(next, src, depth + 1);
+      // printf("\n---\n");
+      // parse_comptime_call_expr(ctx, *local.call_expression_root, src);
+    }
+
+    // expand
+    if (ts_node_is_comptime_kw(node, src) && local.call_expression_root) {
+      printf(BLUE("  [contains '_Comptime'] (%d)"), ctx->comptime_count);
+
+      // FIRST PASS REPLACE THE SEMANTIC VALUE WITH A PLACEHOLDER
       if (local.is_assigning_to_var) {
         nob_sb_appendf(&ctx->out_h, "#define _PLACEHOLDER_COMPTIME_X%d(x) 0\n",
                        ctx->comptime_count);
-      } else if (local.is_inside_function_body) {
+      } else if (local.function_definition_root) {
         nob_sb_appendf(&ctx->out_h,
                        "#define _PLACEHOLDER_COMPTIME_X%d(x) /* comptime block "
                        "statement %d */\n",
@@ -450,61 +668,8 @@ static void walk(WalkContext *const ctx, LocalContext local, TSNode node,
             ctx->comptime_count, ctx->comptime_count);
       }
 
-      if (ts_node_is_comptime_kw(node, src) && local.call_expression_root) {
-        TSNode argument_list = ts_node_child(*local.call_expression_root, 1);
-        printf("\n---->\n");
-        debug_tree_node(argument_list, src, 4);
-        printf("\n<----\n");
-        assert(ts_node_symbol(argument_list) == sym_argument_list);
-        // the code to execute is within the argument_list:
-        String_View _comptime_code = ts_node_to_str_view(argument_list, src);
-        nob_log(INFO, "@@@@ @@@\n %.*s \n@@@ @@@", (int)_comptime_code.count,
-                _comptime_code.data);
-        assert(_comptime_code.data[0] == '(');
-        printf("\n\n\n\n----> %c\n\n\n\n",
-               _comptime_code.data[_comptime_code.count - 1]);
-        assert(_comptime_code.data[_comptime_code.count - 1] == ')');
-        // assert(true);
-
-        char *start =
-            (char *)_comptime_code.data + 1; // skip the initial paren;
-        char *end = (char *)_comptime_code.data + _comptime_code.count - 2;
-
-        // trim initial white space
-        while (*start == ' ' || *start == '\t' || *start == '{') {
-          start++;
-        }
-        while (*end == ' ' || *end == '\t' || *end == '}' || *end == ';') {
-          end--;
-        }
-
-        nob_log(INFO, "\n=== FOUND _Comptime CODE ===\n%.*s\n=============",
-                (int)(end - start + 1), start);
-
-        // call the function in the main;
-
-        nob_sb_appendf(&ctx->runner.definitions,
-                       "\n__Comptime_Statement_Fn(%d, %.*s)\n",
-                       ctx->comptime_count, (int)(end - start + 1), start);
-
-        nob_sb_appendf(&ctx->runner.main,
-                       "__Comptime_Register_Main_Exec(%d); // "
-                       "execute comptime statement #%d\n",
-                       ctx->comptime_count, ctx->comptime_count);
-
-        // nob_sb_appendf(
-        //     &ctx->runner.definitions,
-        //     "\nchar* _Comptime__exec%d(void){\n%.*s;\nreturn NULL;}\n",
-        //     ctx->comptime_count, (int)(end - start + 1), start);
-
-        // nob_sb_appendf(&ctx->runner.main,
-        //                "_Register_Comptime_exec(_Comptime__exec%d(), %d); //
-        //                " "execute comptime statement #%d\n",
-        //                ctx->comptime_count, ctx->comptime_count,
-        //                ctx->comptime_count);
-      }
-
-      ctx->comptime_count++;
+      // surface until the expression
+      parse_comptime_call_expr(ctx, *local.call_expression_root, src);
     }
   }
   putchar('\n');
@@ -534,6 +699,7 @@ int run_file(Context *ctx) {
       "#define _CONCAT_(x, y) x##y\n"
       "#define CONCAT(x, y) _CONCAT_(x, y)\n"
       "#define _Comptime(x) _COMPTIME_X(__COUNTER__, x)\n"
+      "#define _ComptimeType(x) _COMPTIME_X(__COUNTER__, x)\n"
       "#define _COMPTIME_X(n, x) CONCAT(_PLACEHOLDER_COMPTIME_X, n)(x)\n");
 
   walk(&walk_ctx, (LocalContext){0}, root, ctx->raw_source->items, 0);

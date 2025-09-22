@@ -51,7 +51,7 @@ void _polymorphic_result(_ComptimeCtx _ComptimeCtx, const char *t,
   _ComptimeCtx.Inline.appendf("Result_%s_%s", t, e);
 }
 
-#define Result(T, E) _Comptime(_polymorphic_result(_ComptimeCtx, #T, #E))
+#define Result(T, E) _ComptimeType(_polymorphic_result(_ComptimeCtx, #T, #E))
 
 int fib(int n) {
   if (n <= 1)
