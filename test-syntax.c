@@ -108,3 +108,13 @@ int main() {
 //   int b = comptime test(5);
 //   return 0;
 // }
+
+
+_Comptime({ printf("Hi from comptime!\n") }); // this will get executed during compile time
+
+int main(void) { 
+    int large_fibo = _Comptime({
+        _ComptimeCtx.Inline.appendf("%d", fibonacci(42));
+    }); // 267914296 will be baked in to the executable
+    return 0;
+}

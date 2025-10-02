@@ -39,3 +39,10 @@ _ComptimeType(_polymorphic_result(_ComptimeCtx, "char*", "char*")) test5() {
   }
   // return {.is_ok = true, .value = 5};
 }
+
+// STRAT 1: replace all _ComptimeType(...) with _COMPTIME_TYPE so tree-sitter
+// doesnt get confused (reverse macros)
+// k STRAT 2: remove ALL instances of
+//
+// _ComptimeType(...) from the included user file so the runner compiles
+// properly;
