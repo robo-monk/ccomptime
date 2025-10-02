@@ -108,16 +108,16 @@ void __Comptime_wrap_exec(void (*fn)(_ComptimeCtx), _ComptimeCtx ctx) {
           (int)ctx.Inline._sb->count, ctx.Inline._sb->items);
 }
 
-#define main _User_main // overwrite the entrypoint of the user program
-#include _INPUT_PROGRAM_PATH
-#undef main
+// #define main _User_main // overwrite the entrypoint of the user program
+// #include _INPUT_PROGRAM_PATH
+// #undef main
 
 #include _INPUT_COMPTIME_DEFS_PATH
 
 int main(void) {
   _Comptime_FP = fopen(_OUTPUT_HEADERS_PATH, "a");
   if (!_Comptime_FP) {
-    fprintf(stderr, "Failed to open %s for writing\n", _INPUT_PROGRAM_PATH);
+    fprintf(stderr, "Failed to open %s for writing\n", _OUTPUT_HEADERS_PATH);
     exit(EXIT_FAILURE);
   }
 

@@ -39,15 +39,21 @@ typedef struct {
 } Slice;
 
 typedef struct {
+  // TSNode root;
+  TSSymbol root_sym;
+  Slice root_slice;
+  Slice snippet;
+} Comptime_Statement;
+typedef struct {
   String_Builder out_h;
   int comptime_count;
   HashMap macros;
   C_FileBuilder out_c;
 
   struct {
-    Slice *items;
+    Comptime_Statement *items;
     size_t count, capacity;
-  } comptime_slices;
+  } comptime_stmts;
 } WalkContext;
 
 // #define node_len(n) (int)(ts_node_end_byte(n) - ts_node_start_byte(n))
@@ -793,14 +799,26 @@ static void strip_comptime_dependencies(WalkContext *const ctx,
     // during the comptime calculation
     if (local.function_definition_root) {
       nob_log(INFO, ORANGE("Stripping comptime block within a function"));
-      da_append(&ctx->comptime_slices,
-                ts_node_range(*local.function_definition_root, src));
+      Comptime_Statement stmt = {
+          .root_sym = ts_node_symbol(*local.function_definition_root),
+          .root_slice = ts_node_range(*local.function_definition_root, src),
+          .snippet = r};
+      da_append(&ctx->comptime_stmts, stmt);
+      // ts_node_range(*local.function_definition_root, src));
     } else if (local.decleration_root) {
       nob_log(INFO, ORANGE("Stripping top level decleration with comptime"));
+      Comptime_Statement stmt = {
+          .root_sym = ts_node_symbol(*local.decleration_root),
+          .root_slice = ts_node_range(*local.decleration_root, src),
+          .snippet = r};
+      da_append(&ctx->comptime_stmts, stmt);
     } else {
       nob_log(INFO, ORANGE("Stripping top level comptime block"));
-      da_append(&ctx->comptime_slices,
-                ts_node_range(*local.call_expression_root, src));
+      Comptime_Statement stmt = {
+          .root_sym = ts_node_symbol(*local.call_expression_root),
+          .root_slice = ts_node_range(*local.call_expression_root, src),
+          .snippet = r};
+      da_append(&ctx->comptime_stmts, stmt);
     }
   }
 
@@ -819,7 +837,20 @@ static void strip_comptime_dependencies(WalkContext *const ctx,
   }
 }
 
-int run_file(Context *ctx) {
+void build_compile_base_command(Nob_Cmd *out, CliArgs *parsed_argv) {
+  nob_cmd_append(out, Parsed_Argv_compiler_name(parsed_argv));
+  cmd_append_arg_indeces(parsed_argv, &parsed_argv->flags, out);
+
+  if (!(parsed_argv->cct_flags & CliComptimeFlag_Debug)) {
+    nob_cmd_append(out, "-w");
+  } else {
+    nob_cmd_append(out, "-g", "-fsanitize=address,undefined",
+                   "-fno-omit-frame-pointer");
+  }
+}
+
+int run_file(const char *filename, Context *ctx) {
+  size_t _mark = nob_temp_save();
 
   cparser = ts_parser_new();
   ts_parser_set_language(cparser, tree_sitter_c());
@@ -833,9 +864,83 @@ int run_file(Context *ctx) {
   strip_comptime_dependencies(&walk_ctx, (LocalWalkContext){0}, root,
                               ctx->raw_source->items, 0);
 
-  nob_da_foreach(Slice, it, &walk_ctx.comptime_slices) {
-    nob_log(INFO, "Stripping comptime slice %.*s", (int)it->len, it->start);
+  // C_FileBuilder runner = {0};
+  String_Builder runner_definitions = {0};
+  String_Builder runner_main = {0};
+  String_Builder stripped_input_source = {0};
+  char *cursor = ctx->raw_source->items;
+  int comptime_count = 0;
+  nob_da_foreach(Comptime_Statement, it, &walk_ctx.comptime_stmts) {
+    // append everything until here to the source
+    // TODO: it should be ok for the same root_slice to contain multiple
+    // comptime blocks (currenlty itsnot)
+    assert(cursor < it->root_slice.start &&
+           "cursor is ahead of comptime slice");
+    ssize_t offset = it->root_slice.start - cursor;
+    assert(offset >= 0);
+    nob_sb_append_buf(&stripped_input_source, cursor, offset);
+
+    nob_sb_appendf(&runner_definitions, "\n__Comptime_Statement_Fn(%d, %.*s)\n",
+                   comptime_count, it->snippet.len, it->snippet.start);
+
+    nob_sb_appendf(&runner_main,
+                   "__Comptime_Register_Main_Exec(%d); // "
+                   "execute comptime statement #%d\n",
+                   comptime_count, comptime_count);
+
+    comptime_count++;
+    cursor += offset + it->root_slice.len;
+    nob_log(INFO, GREEN("%.*s") GRAY(" <- [%.*s]"), (int)it->snippet.len,
+            it->snippet.start, (int)it->root_slice.len, it->root_slice.start);
   }
+
+  ssize_t offset = ctx->raw_source->items + ctx->raw_source->count - cursor;
+  assert(offset >= 0);
+  nob_sb_append_buf(&stripped_input_source, cursor, offset);
+  nob_log(INFO, BOLD("\n\nAmalgamated stripped file: \n") "%.*s",
+          (int)stripped_input_source.count, stripped_input_source.items);
+
+  // save stripped source
+  const char *stripped_source_filename =
+      nob_temp_sprintf("_comptime_safe_%s", filename);
+  nob_write_entire_file(stripped_source_filename, stripped_input_source.items,
+                        stripped_input_source.count);
+
+  const char *runner_defs_filename =
+      nob_temp_sprintf("%somptime.runner_defs", filename);
+  nob_write_entire_file(runner_defs_filename, runner_definitions.items,
+                        runner_definitions.count);
+
+  const char *runner_main_filename =
+      nob_temp_sprintf("%somptime.runner_main", filename);
+  nob_write_entire_file(runner_main_filename, runner_main.items,
+                        runner_main.count);
+
+  Nob_Cmd build_cmd = {0};
+  build_compile_base_command(&build_cmd, ctx->parsed_argv);
+
+  String_Builder static_obj_filename = {0};
+  nob_sb_appendf(&static_obj_filename, "_%s.o", filename);
+  static_obj_filename.items[static_obj_filename.count] = '\0';
+
+  nob_cmd_append(&build_cmd, stripped_source_filename);
+  nob_cmd_append(&build_cmd, "-c");
+  nob_cmd_append(&build_cmd, "-o", static_obj_filename.items);
+  if (!nob_cmd_run(&build_cmd))
+    fatal("Failed to compile stripped source");
+
+  build_compile_base_command(&build_cmd, ctx->parsed_argv);
+  nob_cmd_append(&build_cmd, "runner.templ.c");
+  nob_cmd_append(&build_cmd, static_obj_filename.items);
+  nob_cmd_append(&build_cmd, "-o", ctx->runner_exepath);
+  nob_cmd_append(
+      &build_cmd,
+      temp_sprintf("-D_INPUT_COMPTIME_DEFS_PATH=\"%s\"", runner_defs_filename),
+      temp_sprintf("-D_INPUT_COMPTIME_MAIN_PATH=\"%s\"", runner_main_filename),
+      temp_sprintf("-D_OUTPUT_HEADERS_PATH=\"%s\"", ctx->gen_header_path));
+
+  if (!nob_cmd_run(&build_cmd))
+    fatal("Failed to compile comptime runner");
   exit(1);
 
   sb_appendf(&walk_ctx.out_h,
@@ -848,7 +953,8 @@ int run_file(Context *ctx) {
       "#define _ComptimeType(x) _COMPTIME_X(__COUNTER__, x)\n"
       "#define _COMPTIME_X(n, x) CONCAT(_PLACEHOLDER_COMPTIME_X, n)(x)\n");
 
-  // walk(&walk_ctx, (LocalWalkContext){0}, root, ctx->raw_source->items, 0);
+  // walk(&walk_ctx, (LocalWalkContext){0}, root, ctx->raw_source->items,
+  // 0);
   strip_comptime_dependencies(&walk_ctx, (LocalWalkContext){0}, root,
                               ctx->raw_source->items, 0);
 
@@ -871,6 +977,7 @@ int run_file(Context *ctx) {
   ts_tree_delete(tree);
   ts_parser_delete(cparser);
   sb_free(walk_ctx.out_h);
+  nob_temp_rewind(_mark);
   return 0;
 }
 
@@ -890,7 +997,7 @@ int main(int argc, char **argv) {
 
   Nob_Cmd final = {0};
   nob_cmd_append(&final, Parsed_Argv_compiler_name(&parsed_argv));
-  cmd_append_arg_indeces(&parsed_argv, &parsed_argv.not_input_files, &final);
+  cmd_append_arg_indeces(&parsed_argv, &parsed_argv.flags, &final);
 
   struct {
     const char **items;
@@ -914,14 +1021,13 @@ int main(int argc, char **argv) {
     // parse_source_file(input_filename, ctx.raw_source);
     nob_read_entire_file(input_filename, ctx.raw_source);
 
-    run_file(&ctx);
+    run_file(input_filename, &ctx);
 
     assert(ctx.runner_templ_path);
     Nob_Cmd cmd = {0};
 
     nob_cmd_append(&cmd, Parsed_Argv_compiler_name(ctx.parsed_argv));
-    cmd_append_arg_indeces(ctx.parsed_argv, &ctx.parsed_argv->not_input_files,
-                           &cmd);
+    cmd_append_arg_indeces(ctx.parsed_argv, &ctx.parsed_argv->flags, &cmd);
     nob_cmd_append(&cmd, "-O0");
 
     cmd_append_inputs_except(ctx.parsed_argv, ctx.input_path, &cmd);
@@ -974,7 +1080,8 @@ int main(int argc, char **argv) {
     // String_Builder repls2 = {0};
     // substitute_block_values(&ctx, &comptime_blocks, &repls2);
 
-    // log_info("WRTING FINAL OUTPUT FILE %s (%zu)bytes ", ctx.final_out_path,
+    // log_info("WRTING FINAL OUTPUT FILE %s (%zu)bytes ",
+    // ctx.final_out_path,
     //          repls2.count);
     // write_entire_file(ctx.final_out_path, repls2.items, repls2.count);
 

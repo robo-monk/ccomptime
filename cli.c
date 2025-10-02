@@ -60,7 +60,8 @@ typedef struct {
   char **argv;
   Compiler compiler;
   ArgIndexList input_files;
-  ArgIndexList not_input_files;
+  ArgIndexList output_files;
+  ArgIndexList flags;
   u_int32_t cct_flags;
 } CliArgs;
 
@@ -124,8 +125,9 @@ CliArgs CliArgs_parse(int argc, char **argv) {
       .argv = argv,
       .argc = argc,
       .input_files = {0},
+      .output_files = {0},
       .cct_flags = 0,
-      .not_input_files = {0},
+      .flags = {0},
   };
 
   parsed_argv.compiler = parse_compiler_name(argv[1]);
@@ -145,10 +147,15 @@ CliArgs CliArgs_parse(int argc, char **argv) {
     exit(EXIT_FAILURE);
   }
 
-  for (int i = 2; i < argc; i++) {
+  // for (int i = 2; i < argc; i++) {
+  int i = 2;
+  while (i < argc) {
     if (argv[i][0] == '-') {
-
-      if (has_prefix(argv[i], TOOL_FLAG_PREFIX)) {
+      if (argv[i][1] == 'o' && strlen(argv[i]) == 2) {
+        da_append(&parsed_argv.output_files, i);
+        da_append(&parsed_argv.output_files, i + 1);
+        i++;
+      } else if (has_prefix(argv[i], TOOL_FLAG_PREFIX)) {
         const char *flag = argv[i] + (NOB_ARRAY_LEN(TOOL_FLAG_PREFIX) - 1);
 
         nob_log(INFO, "Found -cct flag (%s) (%d)", flag,
@@ -166,19 +173,18 @@ CliArgs CliArgs_parse(int argc, char **argv) {
           exit(1);
         }
       } else {
-        da_append(&parsed_argv.not_input_files, i);
+        da_append(&parsed_argv.flags, i);
       }
 
-      continue;
-    }
-
-    if (has_suffix(argv[i], ".c") || has_suffix(argv[i], ".C")) {
+    } else if (has_suffix(argv[i], ".c") || has_suffix(argv[i], ".C")) {
       nob_log(INFO, "Detected input file: %s", argv[i]);
       da_append(&parsed_argv.input_files, i);
     } else {
       nob_log(INFO, "Detected other flag: %s", argv[i]);
-      da_append(&parsed_argv.not_input_files, i);
+      da_append(&parsed_argv.flags, i);
     }
+
+    i++;
   }
 
   return parsed_argv;
@@ -216,7 +222,7 @@ static void run_preprocess_cmd_for_source(CliArgs *parsed_argv,
   nob_log(INFO, "Preprocessing %s", input_filename);
   nob_cmd_append(&pp_cmd, Parsed_Argv_compiler_name(parsed_argv));
   nob_cmd_append(&pp_cmd, input_filename);
-  cmd_append_arg_indeces(parsed_argv, &parsed_argv->not_input_files, &pp_cmd);
+  cmd_append_arg_indeces(parsed_argv, &parsed_argv->flags, &pp_cmd);
 
   nob_cmd_append(&pp_cmd, "-E", "-CC");
   nob_cmd_append(&pp_cmd, "-o", output_filename);
