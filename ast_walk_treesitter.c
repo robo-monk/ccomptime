@@ -41,9 +41,11 @@ typedef struct {
 typedef struct {
   // TSNode root;
   TSSymbol root_sym;
+  char *root_replacement;
   Slice root_slice;
   Slice snippet;
 } Comptime_Statement;
+
 typedef struct {
   String_Builder out_h;
   int comptime_count;
@@ -369,6 +371,27 @@ static bool has_comptime_identifier(TSTree *tree, const char *src) {
   return _has_comptime_identifier(ts_tree_root_node(tree), src);
 }
 
+Slice parse_comptimetype_macro_type_specifier(TSNode macro_type_specifier_root,
+                                              const char *src) {
+  // LOOK AHEAD, WHERE ARE WE?
+  assert(ts_node_symbol(ts_node_child(macro_type_specifier_root, 0)) ==
+         sym_identifier);
+
+  Slice _ComptimeTypeIdentifierRange =
+      ts_node_range(ts_node_child(macro_type_specifier_root, 0), src);
+
+  Slice range = ts_node_range(macro_type_specifier_root, src);
+
+  // parsed range
+  return (Slice){
+      .start = _ComptimeTypeIdentifierRange.start +
+               _ComptimeTypeIdentifierRange.len +
+               1, // +1 to skip the 1st parenthesis
+      .len = range.len - _ComptimeTypeIdentifierRange.len -
+             2, // -2 to compensate for 1st and last paren
+  };
+}
+
 Slice parse_comptime_call_expr2(TSNode call_expression_root, const char *src) {
   assert(ts_node_symbol(call_expression_root) == sym_call_expression);
   TSNode argument_list = ts_node_child(call_expression_root, 1);
@@ -616,7 +639,8 @@ static void walk(WalkContext *const ctx, LocalWalkContext local, TSNode node,
     local.function_definition_root = &node;
     break;
   }
-  case sym_init_declarator: // init_declarator
+  case sym_declaration:
+    assert(!local.decleration_root);
     local.decleration_root = &node;
     break;
   case sym_preproc_def: // preproc_def
@@ -767,7 +791,7 @@ static void strip_comptime_dependencies(WalkContext *const ctx,
     local.function_definition_root = &node;
     break;
   }
-  case sym_init_declarator: // init_declarator
+  case sym_declaration:
     local.decleration_root = &node;
     break;
   case sym_preproc_def: // preproc_def
@@ -785,6 +809,7 @@ static void strip_comptime_dependencies(WalkContext *const ctx,
   }
   }
 
+  Slice r = {0};
   if (sym == sym_identifier && ts_node_is_comptime_kw(node, src)) {
     if (!local.call_expression_root && local.preproc_def_root &&
         local.child_idx == 1)
@@ -792,24 +817,66 @@ static void strip_comptime_dependencies(WalkContext *const ctx,
     if (!local.call_expression_root)
       fatal("Invalid use of _Comptime");
 
-    Slice r = parse_comptime_call_expr2(*local.call_expression_root, src);
+    r = parse_comptime_call_expr2(*local.call_expression_root, src);
     nob_log(INFO, BOLD("Parsed _Comptime call : ") "%.*s", r.len, r.start);
+  } else if (sym == sym_identifier && ts_node_is_comptimetype_kw(node, src)) {
+    if (!local.macro_type_specifier_root && local.preproc_def_root &&
+        local.child_idx == 1)
+      fatal("Redefining `_ComptimeType` macro is not supported");
+    if (!local.macro_type_specifier_root)
+      fatal("Invalid use of _ComptimeType");
+
+    r = parse_comptimetype_macro_type_specifier(
+        *local.macro_type_specifier_root, src);
+
+    nob_log(INFO, BOLD("Parsed _ComptimeType call : ") "%.*s", r.len, r.start);
+  }
+
+  if (r.start) {
 
     // if we are within a function body, then this function cannot be used
     // during the comptime calculation
     if (local.function_definition_root) {
       nob_log(INFO, ORANGE("Stripping comptime block within a function"));
+      assert(ts_node_symbol(ts_node_child(*local.function_definition_root,
+                                          1)) == sym_function_declarator);
+      assert(ts_node_symbol(ts_node_child(
+                 ts_node_child(*local.function_definition_root, 1), 0)) ==
+             sym_identifier);
+      TSNode func_identifier =
+          ts_node_child(ts_node_child(*local.function_definition_root, 1), 0);
+
       Comptime_Statement stmt = {
           .root_sym = ts_node_symbol(*local.function_definition_root),
           .root_slice = ts_node_range(*local.function_definition_root, src),
+          .root_replacement =
+              temp_sprintf("void %.*s(void); /* function definition removed */",
+                           ts_node_range(func_identifier, src).len,
+                           ts_node_range(func_identifier, src).start),
           .snippet = r};
       da_append(&ctx->comptime_stmts, stmt);
       // ts_node_range(*local.function_definition_root, src));
     } else if (local.decleration_root) {
       nob_log(INFO, ORANGE("Stripping top level decleration with comptime"));
+      // remove the = and after
+      assert(ts_node_symbol(ts_node_child(*local.decleration_root, 1)) ==
+             sym_init_declarator);
+      assert(ts_node_symbol(
+                 ts_node_child(ts_node_child(*local.decleration_root, 1), 0)) ==
+             sym_identifier);
+
+      TSNode var_identifier =
+          ts_node_child(ts_node_child(*local.decleration_root, 1), 0);
+
+      Slice tobe_replaced = {.start = src + ts_node_end_byte(var_identifier),
+                             .len = ts_node_end_byte(*local.decleration_root) -
+                                    ts_node_end_byte(var_identifier)};
+
       Comptime_Statement stmt = {
           .root_sym = ts_node_symbol(*local.decleration_root),
-          .root_slice = ts_node_range(*local.decleration_root, src),
+          // .root_slice = ts_node_range(*local.decleration_root, src),
+          .root_slice = tobe_replaced,
+          .root_replacement = "; /* decleration removed */",
           .snippet = r};
       da_append(&ctx->comptime_stmts, stmt);
     } else {
@@ -817,6 +884,7 @@ static void strip_comptime_dependencies(WalkContext *const ctx,
       Comptime_Statement stmt = {
           .root_sym = ts_node_symbol(*local.call_expression_root),
           .root_slice = ts_node_range(*local.call_expression_root, src),
+          .root_replacement = "/* top level statement removed */",
           .snippet = r};
       da_append(&ctx->comptime_stmts, stmt);
     }
@@ -880,6 +948,9 @@ int run_file(const char *filename, Context *ctx) {
     assert(offset >= 0);
     nob_sb_append_buf(&stripped_input_source, cursor, offset);
 
+    // append the replacement
+    nob_sb_append_cstr(&stripped_input_source, it->root_replacement);
+
     nob_sb_appendf(&runner_definitions, "\n__Comptime_Statement_Fn(%d, %.*s)\n",
                    comptime_count, it->snippet.len, it->snippet.start);
 
@@ -917,24 +988,25 @@ int run_file(const char *filename, Context *ctx) {
                         runner_main.count);
 
   Nob_Cmd build_cmd = {0};
-  build_compile_base_command(&build_cmd, ctx->parsed_argv);
+  // build_compile_base_command(&build_cmd, ctx->parsed_argv);
 
-  String_Builder static_obj_filename = {0};
-  nob_sb_appendf(&static_obj_filename, "_%s.o", filename);
-  static_obj_filename.items[static_obj_filename.count] = '\0';
+  // String_Builder static_obj_filename = {0};
+  // nob_sb_appendf(&static_obj_filename, "_%s.o", filename);
+  // static_obj_filename.items[static_obj_filename.count] = '\0';
 
-  nob_cmd_append(&build_cmd, stripped_source_filename);
-  nob_cmd_append(&build_cmd, "-c");
-  nob_cmd_append(&build_cmd, "-o", static_obj_filename.items);
-  if (!nob_cmd_run(&build_cmd))
-    fatal("Failed to compile stripped source");
+  // nob_cmd_append(&build_cmd, stripped_source_filename);
+  // nob_cmd_append(&build_cmd, "-c");
+  // nob_cmd_append(&build_cmd, "-o", static_obj_filename.items);
+  // if (!nob_cmd_run(&build_cmd))
+  //   fatal("Failed to compile stripped source");
 
   build_compile_base_command(&build_cmd, ctx->parsed_argv);
   nob_cmd_append(&build_cmd, "runner.templ.c");
-  nob_cmd_append(&build_cmd, static_obj_filename.items);
+  // nob_cmd_append(&build_cmd, static_obj_filename.items);
   nob_cmd_append(&build_cmd, "-o", ctx->runner_exepath);
   nob_cmd_append(
       &build_cmd,
+      temp_sprintf("-D_INPUT_PROGRAM_PATH=\"%s\"", stripped_source_filename),
       temp_sprintf("-D_INPUT_COMPTIME_DEFS_PATH=\"%s\"", runner_defs_filename),
       temp_sprintf("-D_INPUT_COMPTIME_MAIN_PATH=\"%s\"", runner_main_filename),
       temp_sprintf("-D_OUTPUT_HEADERS_PATH=\"%s\"", ctx->gen_header_path));
