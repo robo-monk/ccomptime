@@ -33,12 +33,11 @@ void _polymorphic_result(_ComptimeCtx _ComptimeCtx, const char *t,
 // #define ResultIntInt() Result(int, int)
 
 // _ComptimeType(_comptime_polymorph_type(_ComptimeCtx)) test5() {
-_ComptimeType(_polymorphic_result(_ComptimeCtx, "char*", "char*")) test5() {
-  if (true) {
-    return "hi";
-  }
-  // return {.is_ok = true, .value = 5};
-}
+// _ComptimeType(_polymorphic_result(_ComptimeCtx, "char*", "char*")) test5() {
+//   if (true) {
+//     return "hi";
+//   }
+// }
 
 // STRAT 1: replace all _ComptimeType(...) with _COMPTIME_TYPE so tree-sitter
 // doesnt get confused (reverse macros)
