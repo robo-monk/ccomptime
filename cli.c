@@ -80,6 +80,7 @@ typedef struct {
   const char *vals_path;
   const char *final_out_path;
   const char *gen_header_path;
+  const char *stripped_source_path;
   CliArgs *parsed_argv;
 } Context;
 
@@ -107,6 +108,8 @@ static void Context_fill_paths(Context *ctx, const char *original_source) {
   ctx->runner_templ_path = leaky_sprintf("%sct-runner.c", original_source);
   ctx->runner_defs_path = leaky_sprintf("%sc-runner-defs.c", original_source);
   ctx->runner_main_path = leaky_sprintf("%sc-runner-main.c", original_source);
+  ctx->stripped_source_path =
+      leaky_sprintf("%somptime_safe.c", original_source);
 
 #ifdef _WIN32
   ctx->runner_exepath = leaky_sprintf("%sct-runner.exe", original_source);

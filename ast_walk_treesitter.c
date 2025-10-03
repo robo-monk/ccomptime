@@ -50,10 +50,17 @@ typedef struct {
   String_Builder out_h;
   int comptime_count;
   HashMap macros;
+  HashMap comptime_dependencies;
+
   C_FileBuilder out_c;
 
   struct {
-    Comptime_Statement *items;
+    Slice *items;
+    size_t count, capacity;
+  } to_be_removed;
+
+  struct {
+    Slice *items;
     size_t count, capacity;
   } comptime_stmts;
 } WalkContext;
@@ -777,14 +784,14 @@ static void walk(WalkContext *const ctx, LocalWalkContext local, TSNode node,
   }
 }
 
-static void strip_comptime_dependencies(WalkContext *const ctx,
-                                        LocalWalkContext local, TSNode node,
-                                        const char *src, unsigned depth) {
-
+static void register_comptime_dependencies(WalkContext *const ctx,
+                                           LocalWalkContext local, TSNode node,
+                                           const char *src, unsigned depth) {
   TSSymbol sym = ts_node_symbol(node);
   switch (sym) {
   case sym_identifier: { // identifier
-    try_expand_macro(node, ctx, local, src, depth, strip_comptime_dependencies);
+    try_expand_macro(node, ctx, local, src, depth,
+                     register_comptime_dependencies);
     break;
   }
   case sym_function_definition: { // function_definition
@@ -837,7 +844,6 @@ static void strip_comptime_dependencies(WalkContext *const ctx,
     // if we are within a function body, then this function cannot be used
     // during the comptime calculation
     if (local.function_definition_root) {
-      nob_log(INFO, ORANGE("Stripping comptime block within a function"));
       assert(ts_node_symbol(ts_node_child(*local.function_definition_root,
                                           1)) == sym_function_declarator);
       assert(ts_node_symbol(ts_node_child(
@@ -845,16 +851,22 @@ static void strip_comptime_dependencies(WalkContext *const ctx,
              sym_identifier);
       TSNode func_identifier =
           ts_node_child(ts_node_child(*local.function_definition_root, 1), 0);
+      Slice func_name = ts_node_range(func_identifier, src);
 
-      Comptime_Statement stmt = {
-          .root_sym = ts_node_symbol(*local.function_definition_root),
-          .root_slice = ts_node_range(*local.function_definition_root, src),
-          .root_replacement =
-              temp_sprintf("void %.*s(void); /* function definition removed */",
-                           ts_node_range(func_identifier, src).len,
-                           ts_node_range(func_identifier, src).start),
-          .snippet = r};
-      da_append(&ctx->comptime_stmts, stmt);
+      nob_log(INFO, ORANGE("function %.*s is comptime dependent"),
+              ts_node_range(func_identifier, src).len,
+              ts_node_range(func_identifier, src).start);
+
+      hashmap_put2(&ctx->comptime_dependencies, (char *)func_name.start,
+                   func_name.len, (void *)1);
+
+      // Comptime_Statement stmt = {
+      //     .root_sym = ts_node_symbol(*local.decleration_root),
+      //     // .root_slice = ts_node_range(*local.decleration_root, src),
+      //     .root_slice = tobe_replaced,
+      //     .root_replacement = "; /* decleration removed */",
+      //     .snippet = r};
+      // da_append(&ctx->comptime_stmts, stmt);
       // ts_node_range(*local.function_definition_root, src));
     } else if (local.decleration_root) {
       nob_log(INFO, ORANGE("Stripping top level decleration with comptime"));
@@ -867,37 +879,114 @@ static void strip_comptime_dependencies(WalkContext *const ctx,
 
       TSNode var_identifier =
           ts_node_child(ts_node_child(*local.decleration_root, 1), 0);
+      Slice var_name = ts_node_range(var_identifier, src);
+
+      nob_log(INFO, ORANGE("decleration %.*s is comptime dependent"),
+              ts_node_range(var_identifier, src).len,
+              ts_node_range(var_identifier, src).start);
+
+      hashmap_put2(&ctx->comptime_dependencies, (char *)var_name.start,
+                   var_name.len, (void *)1);
 
       Slice tobe_replaced = {.start = src + ts_node_end_byte(var_identifier),
                              .len = ts_node_end_byte(*local.decleration_root) -
                                     ts_node_end_byte(var_identifier)};
 
-      Comptime_Statement stmt = {
-          .root_sym = ts_node_symbol(*local.decleration_root),
-          // .root_slice = ts_node_range(*local.decleration_root, src),
-          .root_slice = tobe_replaced,
-          .root_replacement = "; /* decleration removed */",
-          .snippet = r};
-      da_append(&ctx->comptime_stmts, stmt);
+      // Comptime_Statement stmt = {
+      //     .root_sym = ts_node_symbol(*local.decleration_root),
+      //     // .root_slice = ts_node_range(*local.decleration_root, src),
+      //     .root_slice = tobe_replaced,
+      //     .root_replacement = "; /* decleration removed */",
+      //     .snippet = r};
+      // da_append(&ctx->comptime_stmts, stmt);
     } else {
       nob_log(INFO, ORANGE("Stripping top level comptime block"));
-      Comptime_Statement stmt = {
-          .root_sym = ts_node_symbol(*local.call_expression_root),
-          .root_slice = ts_node_range(*local.call_expression_root, src),
-          .root_replacement = "/* top level statement removed */",
-          .snippet = r};
-      da_append(&ctx->comptime_stmts, stmt);
+      // Comptime_Statement stmt = {
+      //     .root_sym = ts_node_symbol(*local.call_expression_root),
+      //     .root_slice = ts_node_range(*local.call_expression_root, src),
+      //     .root_replacement = "/* top level statement removed */",
+      //     .snippet = r};
+      // da_append(&ctx->comptime_stmts, stmt);
     }
+
+    da_append(&ctx->comptime_stmts, r);
   }
 
   uint32_t n = ts_node_child_count(node);
-
-  if (n == 0) {
-    nob_log(INFO, GREEN("%.*s"), ts_node_range(node, src).len,
-            ts_node_range(node, src).start);
-    // nob_sb_append_buf(&ctx->out_h, ts_node_range(node, src).start,
-    //                   ts_node_range(node, src).len);
+  for (uint32_t i = 0; i < n; i++) {
+    local.child_idx = i;
+    register_comptime_dependencies(ctx, local, ts_node_child(node, i), src,
+                                   depth + 1);
   }
+}
+
+static void strip_comptime_dependencies(WalkContext *const ctx,
+                                        LocalWalkContext local, TSNode node,
+                                        const char *src, unsigned depth) {
+
+  TSSymbol sym = ts_node_symbol(node);
+  switch (sym) {
+  case sym_identifier: { // identifier
+    try_expand_macro(node, ctx, local, src, depth, strip_comptime_dependencies);
+    break;
+  }
+  case sym_function_definition: { // function_definition
+    local.function_definition_root = &node;
+    break;
+  }
+  case sym_declaration:
+    local.decleration_root = &node;
+    break;
+  case sym_preproc_def: // preproc_def
+    local.preproc_def_root = &node;
+    break;
+  case sym_macro_type_specifier:
+    local.macro_type_specifier_root = &node;
+    break;
+  case sym_call_expression: /* call exresssion */
+    local.call_expression_root = &node;
+    break;
+  case sym_preproc_function_def: {
+    parse_preproc_function_def(ctx, node, src);
+    return;
+  }
+  }
+
+  Slice node_slice = ts_node_range(node, src);
+  if (sym == sym_identifier &&
+      hashmap_get2(&ctx->comptime_dependencies, (char *)node_slice.start,
+                   node_slice.len)) {
+    nob_log(INFO, MAGENTA("Within a comptime dependency!"));
+
+    // if we are within a function body, then this function cannot be used
+    // during the comptime calculation
+    //
+    // thus we should strip it
+    if (local.function_definition_root) {
+      assert(ts_node_symbol(ts_node_child(*local.function_definition_root,
+                                          1)) == sym_function_declarator);
+      assert(ts_node_symbol(ts_node_child(
+                 ts_node_child(*local.function_definition_root, 1), 0)) ==
+             sym_identifier);
+      nob_da_append(&ctx->to_be_removed,
+                    ts_node_range(*local.function_definition_root, src));
+
+    } else if (local.decleration_root) {
+      nob_log(INFO, ORANGE("Stripping top level decleration with comptime"));
+
+      nob_da_append(&ctx->to_be_removed,
+                    ts_node_range(*local.decleration_root, src));
+    } else {
+      nob_log(INFO, ORANGE("Stripping top level comptime block"));
+
+      nob_da_append(&ctx->to_be_removed,
+                    ts_node_range(*local.call_expression_root, src));
+    }
+  };
+
+  Slice r = {0};
+
+  uint32_t n = ts_node_child_count(node);
   for (uint32_t i = 0; i < n; i++) {
     local.child_idx = i;
     strip_comptime_dependencies(ctx, local, ts_node_child(node, i), src,
@@ -929,40 +1018,53 @@ int run_file(const char *filename, Context *ctx) {
   debug_tree(tree, ctx->raw_source->items, 0);
   TSNode root = ts_tree_root_node(tree);
   WalkContext walk_ctx = (WalkContext){0};
+
+  register_comptime_dependencies(&walk_ctx, (LocalWalkContext){0}, root,
+                                 ctx->raw_source->items, 0);
+
   strip_comptime_dependencies(&walk_ctx, (LocalWalkContext){0}, root,
                               ctx->raw_source->items, 0);
 
   // C_FileBuilder runner = {0};
   String_Builder runner_definitions = {0};
   String_Builder runner_main = {0};
-  String_Builder stripped_input_source = {0};
-  char *cursor = ctx->raw_source->items;
   int comptime_count = 0;
-  nob_da_foreach(Comptime_Statement, it, &walk_ctx.comptime_stmts) {
-    // append everything until here to the source
-    // TODO: it should be ok for the same root_slice to contain multiple
-    // comptime blocks (currenlty itsnot)
-    assert(cursor < it->root_slice.start &&
-           "cursor is ahead of comptime slice");
-    ssize_t offset = it->root_slice.start - cursor;
-    assert(offset >= 0);
-    nob_sb_append_buf(&stripped_input_source, cursor, offset);
 
-    // append the replacement
-    nob_sb_append_cstr(&stripped_input_source, it->root_replacement);
-
+  nob_da_foreach(Slice, it, &walk_ctx.comptime_stmts) {
     nob_sb_appendf(&runner_definitions, "\n__Comptime_Statement_Fn(%d, %.*s)\n",
-                   comptime_count, it->snippet.len, it->snippet.start);
+                   comptime_count, it->len, it->start);
 
     nob_sb_appendf(&runner_main,
                    "__Comptime_Register_Main_Exec(%d); // "
                    "execute comptime statement #%d\n",
                    comptime_count, comptime_count);
 
+    nob_log(INFO, BOLD("COMPTIME SNIPPET ::") PURPLE("%.*s"), (int)it->len,
+            it->start);
     comptime_count++;
-    cursor += offset + it->root_slice.len;
-    nob_log(INFO, GREEN("%.*s") GRAY(" <- [%.*s]"), (int)it->snippet.len,
-            it->snippet.start, (int)it->root_slice.len, it->root_slice.start);
+  }
+
+  String_Builder stripped_input_source = {0};
+  char *cursor = ctx->raw_source->items;
+  nob_da_foreach(Slice, it, &walk_ctx.to_be_removed) {
+    // append everything until here to the source
+    // TODO: it should be ok for the same root_slice to contain multiple
+    // comptime blocks (currenlty itsnot)
+    // we already removed that slice
+
+    if (cursor >= it->start)
+      continue;
+
+    nob_log(INFO, RED("Removing: \n'''\n%.*s\n'''\n"), it->len, it->start);
+    assert(cursor < it->start && "cursor is ahead of comptime slice");
+
+    ssize_t offset = it->start - cursor;
+    assert(offset >= 0);
+
+    nob_log(INFO, GREEN("Appending: \n'''\n %.*s \n'''\n"), (int)offset,
+            cursor);
+    nob_sb_append_buf(&stripped_input_source, cursor, offset);
+    cursor = it->start + it->len; // jump over the comptime slice
   }
 
   ssize_t offset = ctx->raw_source->items + ctx->raw_source->count - cursor;
@@ -972,19 +1074,16 @@ int run_file(const char *filename, Context *ctx) {
           (int)stripped_input_source.count, stripped_input_source.items);
 
   // save stripped source
-  const char *stripped_source_filename =
-      nob_temp_sprintf("_comptime_safe_%s", filename);
-  nob_write_entire_file(stripped_source_filename, stripped_input_source.items,
+  nob_write_entire_file(ctx->stripped_source_path, stripped_input_source.items,
                         stripped_input_source.count);
 
-  const char *runner_defs_filename =
-      nob_temp_sprintf("%somptime.runner_defs", filename);
-  nob_write_entire_file(runner_defs_filename, runner_definitions.items,
+  nob_write_entire_file(ctx->runner_defs_path, runner_definitions.items,
                         runner_definitions.count);
 
-  const char *runner_main_filename =
-      nob_temp_sprintf("%somptime.runner_main", filename);
-  nob_write_entire_file(runner_main_filename, runner_main.items,
+  // const char *runner_main_filename =
+  //     nob_temp_sprintf("%somptime.runner_main", filename);
+
+  nob_write_entire_file(ctx->runner_main_path, runner_main.items,
                         runner_main.count);
 
   Nob_Cmd build_cmd = {0};
@@ -1006,14 +1105,13 @@ int run_file(const char *filename, Context *ctx) {
   nob_cmd_append(&build_cmd, "-o", ctx->runner_exepath);
   nob_cmd_append(
       &build_cmd,
-      temp_sprintf("-D_INPUT_PROGRAM_PATH=\"%s\"", stripped_source_filename),
-      temp_sprintf("-D_INPUT_COMPTIME_DEFS_PATH=\"%s\"", runner_defs_filename),
-      temp_sprintf("-D_INPUT_COMPTIME_MAIN_PATH=\"%s\"", runner_main_filename),
+      temp_sprintf("-D_INPUT_PROGRAM_PATH=\"%s\"", ctx->stripped_source_path),
+      temp_sprintf("-D_INPUT_COMPTIME_DEFS_PATH=\"%s\"", ctx->runner_defs_path),
+      temp_sprintf("-D_INPUT_COMPTIME_MAIN_PATH=\"%s\"", ctx->runner_main_path),
       temp_sprintf("-D_OUTPUT_HEADERS_PATH=\"%s\"", ctx->gen_header_path));
 
   if (!nob_cmd_run(&build_cmd))
     fatal("Failed to compile comptime runner");
-  exit(1);
 
   sb_appendf(&walk_ctx.out_h,
              "/*// @generated - ccomptime™ v0.0.1 - %lu \\*/\n", time(NULL));
@@ -1024,11 +1122,6 @@ int run_file(const char *filename, Context *ctx) {
       "#define _Comptime(x) _COMPTIME_X(__COUNTER__, x)\n"
       "#define _ComptimeType(x) _COMPTIME_X(__COUNTER__, x)\n"
       "#define _COMPTIME_X(n, x) CONCAT(_PLACEHOLDER_COMPTIME_X, n)(x)\n");
-
-  // walk(&walk_ctx, (LocalWalkContext){0}, root, ctx->raw_source->items,
-  // 0);
-  strip_comptime_dependencies(&walk_ctx, (LocalWalkContext){0}, root,
-                              ctx->raw_source->items, 0);
 
   sb_appendf(&walk_ctx.out_h, "/* ---- */// the end. ///* ---- */\n");
 
@@ -1095,39 +1188,40 @@ int main(int argc, char **argv) {
 
     run_file(input_filename, &ctx);
 
-    assert(ctx.runner_templ_path);
+    // assert(ctx.runner_templ_path);
+    // Nob_Cmd cmd = {0};
+
+    // nob_cmd_append(&cmd, Parsed_Argv_compiler_name(ctx.parsed_argv));
+    // cmd_append_arg_indeces(ctx.parsed_argv, &ctx.parsed_argv->flags, &cmd);
+    // nob_cmd_append(&cmd, "-O0");
+
+    // cmd_append_inputs_except(ctx.parsed_argv, ctx.input_path, &cmd);
+
+    // // nob_cmd_append(&cmd, ctx.runner_cpath);
+    // nob_cmd_append(&cmd, "runner.templ.c");
+
+    // if (!(ctx.parsed_argv->cct_flags & CliComptimeFlag_Debug)) {
+    //   nob_cmd_append(&cmd, "-w");
+    // } else {
+    //   nob_cmd_append(&cmd, "-g", "-fsanitize=address,undefined",
+    //                  "-fno-omit-frame-pointer");
+    // }
+
+    // nob_cmd_append(
+    //     &cmd, "-o", ctx.runner_exepath,
+    //     temp_sprintf("-D_INPUT_PROGRAM_PATH=\"%s\"", ctx.input_path),
+    //     temp_sprintf("-D_INPUT_COMPTIME_DEFS_PATH=\"%s\"",
+    //                  ctx.runner_defs_path),
+    //     temp_sprintf("-D_INPUT_COMPTIME_MAIN_PATH=\"%s\"",
+    //                  ctx.runner_main_path),
+    //     temp_sprintf("-D_OUTPUT_HEADERS_PATH=\"%s\"", ctx.gen_header_path));
+
+    // if (!nob_cmd_run(&cmd)) {
+    //   nob_log(ERROR, "failed to compile runner %s", ctx.runner_templ_path);
+    //   exit(1);
+    // }
+
     Nob_Cmd cmd = {0};
-
-    nob_cmd_append(&cmd, Parsed_Argv_compiler_name(ctx.parsed_argv));
-    cmd_append_arg_indeces(ctx.parsed_argv, &ctx.parsed_argv->flags, &cmd);
-    nob_cmd_append(&cmd, "-O0");
-
-    cmd_append_inputs_except(ctx.parsed_argv, ctx.input_path, &cmd);
-
-    // nob_cmd_append(&cmd, ctx.runner_cpath);
-    nob_cmd_append(&cmd, "runner.templ.c");
-
-    if (!(ctx.parsed_argv->cct_flags & CliComptimeFlag_Debug)) {
-      nob_cmd_append(&cmd, "-w");
-    } else {
-      nob_cmd_append(&cmd, "-g", "-fsanitize=address,undefined",
-                     "-fno-omit-frame-pointer");
-    }
-
-    nob_cmd_append(
-        &cmd, "-o", ctx.runner_exepath,
-        temp_sprintf("-D_INPUT_PROGRAM_PATH=\"%s\"", ctx.input_path),
-        temp_sprintf("-D_INPUT_COMPTIME_DEFS_PATH=\"%s\"",
-                     ctx.runner_defs_path),
-        temp_sprintf("-D_INPUT_COMPTIME_MAIN_PATH=\"%s\"",
-                     ctx.runner_main_path),
-        temp_sprintf("-D_OUTPUT_HEADERS_PATH=\"%s\"", ctx.gen_header_path));
-
-    if (!nob_cmd_run(&cmd)) {
-      nob_log(ERROR, "failed to compile runner %s", ctx.runner_templ_path);
-      exit(1);
-    }
-
     nob_log(INFO, "Running runner %s", ctx.runner_exepath);
     nob_cmd_append(&cmd, nob_temp_sprintf("./%s", ctx.runner_exepath));
     if (!nob_cmd_run(&cmd)) {
@@ -1165,6 +1259,9 @@ int main(int argc, char **argv) {
 
     // log_info("Scheduling intermediate files for deletion");
     da_append(&files_to_remove, ctx.preprocessed_path);
+    da_append(&files_to_remove, ctx.runner_main_path);
+    da_append(&files_to_remove, ctx.runner_defs_path);
+    da_append(&files_to_remove, ctx.stripped_source_path);
     da_append(&files_to_remove, ctx.runner_templ_path);
     da_append(&files_to_remove, ctx.runner_exepath);
     da_append(&files_to_remove, ctx.vals_path);

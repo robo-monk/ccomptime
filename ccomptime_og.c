@@ -90,7 +90,7 @@ typedef struct {
   char **argv;
   Compiler compiler;
   ArgIndexList input_files;
-  ArgIndexList not_input_files;
+  ArgIndexList flags;
   u_int32_t cct_flags;
 } CliArgs;
 
@@ -102,7 +102,7 @@ CliArgs CliArgs_parse(int argc, char **argv) {
       .argc = argc,
       .input_files = {0},
       .cct_flags = 0,
-      .not_input_files = {0},
+      .flags = {0},
   };
 
   parsed_argv.compiler = parse_compiler_name(argv[1]);
@@ -139,7 +139,7 @@ CliArgs CliArgs_parse(int argc, char **argv) {
           exit(1);
         }
       } else {
-        da_append(&parsed_argv.not_input_files, i);
+        da_append(&parsed_argv.flags, i);
       }
 
       continue;
@@ -150,7 +150,7 @@ CliArgs CliArgs_parse(int argc, char **argv) {
       da_append(&parsed_argv.input_files, i);
     } else {
       log_info("Detected other flag: %s", argv[i]);
-      da_append(&parsed_argv.not_input_files, i);
+      da_append(&parsed_argv.flags, i);
     }
   }
 
@@ -338,7 +338,7 @@ void compile_and_run_runner(Context *ctx) {
   static Nob_Cmd cmd = {0};
 
   nob_cmd_append(&cmd, Parsed_Argv_compiler_name(ctx->parsed_argv));
-  cmd_append_arg_indeces(ctx->parsed_argv, &ctx->parsed_argv->not_input_files,
+  cmd_append_arg_indeces(ctx->parsed_argv, &ctx->parsed_argv->flags,
                          &cmd);
   nob_cmd_append(&cmd, "-O0");
 
@@ -670,7 +670,7 @@ static void run_preprocess_cmd_for_source(CliArgs *parsed_argv,
   log_info("Preprocessing %s", input_filename);
   nob_cmd_append(&pp_cmd, Parsed_Argv_compiler_name(parsed_argv));
   nob_cmd_append(&pp_cmd, input_filename);
-  cmd_append_arg_indeces(parsed_argv, &parsed_argv->not_input_files, &pp_cmd);
+  cmd_append_arg_indeces(parsed_argv, &parsed_argv->flags, &pp_cmd);
 
   nob_cmd_append(&pp_cmd, "-E", "-CC");
   nob_cmd_append(&pp_cmd, "-o", output_filename);
@@ -794,7 +794,7 @@ int main(int argc, char **argv) {
 
   Nob_Cmd final = {0};
   nob_cmd_append(&final, Parsed_Argv_compiler_name(&parsed_argv));
-  cmd_append_arg_indeces(&parsed_argv, &parsed_argv.not_input_files, &final);
+  cmd_append_arg_indeces(&parsed_argv, &parsed_argv.flags, &final);
 
   struct {
     const char **items;

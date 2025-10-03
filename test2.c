@@ -29,15 +29,17 @@ void _polymorphic_result(_ComptimeCtx _ComptimeCtx, const char *t,
   _ComptimeCtx.Inline.appendf("Result_%s_%s", t, e);
 }
 
+// #define String char *
 // #define Result(T, E) _ComptimeType(_polymorphic_result(_ComptimeCtx, #T, #E))
+#define Result(T) _ComptimeType(_polymorphic_result(_ComptimeCtx, #T, char *))
 // #define ResultIntInt() Result(int, int)
 
 // _ComptimeType(_comptime_polymorph_type(_ComptimeCtx)) test5() {
-// _ComptimeType(_polymorphic_result(_ComptimeCtx, "char*", "char*")) test5() {
-//   if (true) {
-//     return "hi";
-//   }
-// }
+Result(int) test5() {
+  if (true) {
+    return "hi";
+  }
+}
 
 // STRAT 1: replace all _ComptimeType(...) with _COMPTIME_TYPE so tree-sitter
 // doesnt get confused (reverse macros)
