@@ -210,6 +210,8 @@ void cmd_append_inputs_except(CliArgs *pa, const char *skip_input, Cmd *cmd) {
 }
 
 void cmd_append_arg_indeces(CliArgs *pa, ArgIndexList *pointers, Cmd *cmd) {
+  if (!pointers->items)
+    return;
   nob_da_foreach(int, index, pointers) {
     const char *f = pa->argv[*index];
     nob_cmd_append(cmd, f);

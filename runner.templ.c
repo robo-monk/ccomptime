@@ -112,6 +112,9 @@ void __Comptime_wrap_exec(void (*fn)(_ComptimeCtx), _ComptimeCtx ctx) {
 #include _INPUT_PROGRAM_PATH
 #undef main
 
+#undef _ComptimeType
+#define _ComptimeType(x) x
+
 #include _INPUT_COMPTIME_DEFS_PATH
 
 int main(void) {

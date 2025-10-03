@@ -19,7 +19,7 @@ void _comptime_polymorph_type(_ComptimeCtx _ComptimeCtx) {
   _ComptimeCtx.Inline.appendf("int");
 }
 
-_ComptimeType(_comptime_polymorph_type(_ComptimeCtx)) test() { return 1; }
+_ComptimeType(_comptime_polymorph_type(_ComptimeCtx, T)) test() { return 1; }
 
 int main2() {
   int x = 10 + a + test();

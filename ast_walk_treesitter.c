@@ -38,13 +38,22 @@ typedef struct {
   int len;
 } Slice;
 
-typedef struct {
-  // TSNode root;
-  TSSymbol root_sym;
-  char *root_replacement;
-  Slice root_slice;
-  Slice snippet;
-} Comptime_Statement;
+bool slice_begins_with(Slice s, const char *prefix) {
+  int prefix_len = (int)strlen(prefix);
+  if (prefix_len > s.len)
+    return false;
+  return strncmp(s.start, prefix, prefix_len) == 0;
+}
+Slice slice_strip_prefix(Slice s, const char *prefix) {
+  int prefix_len = (int)strlen(prefix);
+  assert(prefix_len <= s.len);
+  assert(strncmp(s.start, prefix, prefix_len) == 0);
+
+  Slice out;
+  out.start = s.start + prefix_len;
+  out.len = s.len - prefix_len;
+  return out;
+}
 
 typedef struct {
   String_Builder out_h;
@@ -58,6 +67,11 @@ typedef struct {
     Slice *items;
     size_t count, capacity;
   } to_be_removed;
+
+  struct {
+    Slice *items;
+    size_t count, capacity;
+  } comptimetype_stmts;
 
   struct {
     Slice *items;
@@ -515,6 +529,10 @@ static void try_expand_macro(
          ts_node_range(macro_def->identifier, src).start);
 
   if (macro_def->arg_names.count > 0) {
+
+    if (!local.call_expression_root) {
+      debug_tree(macro_def->body_tree, macro_def->body_src, 0);
+    }
     // macro call with arguments, we must be inside a call expression
     assert(local.call_expression_root &&
            "macro call with args must be inside a `call expression`"
@@ -685,7 +703,7 @@ static void walk(WalkContext *const ctx, LocalWalkContext local, TSNode node,
 
       // sometimes tree sitter misparses
       fatal("Invalid use of _ComptimeType (found _ComptimeType outside of a "
-            "call expression)");
+            "`macro_type_specifier`");
     }
 
     if (ts_node_is_comptimetype_kw(node, src) &&
@@ -784,6 +802,41 @@ static void walk(WalkContext *const ctx, LocalWalkContext local, TSNode node,
   }
 }
 
+// Sometimes due to C syntactic rules, _ComptimeType stuff might break the
+// treeparser For example _ComptimeType(test930(_ComptimeCtx, 0)) test5() {...}
+// does not get parsed into a function decleration with a macro type specifier
+// instead it gets parsed as an expression, expression and compound statement,
+// completely bypassing the the function decleration
+//
+// To solve this, we do a first pass where we parse All _ComptimeType
+// statements into identifiers and reparse the tree
+typedef struct {
+  struct {
+    TSNode *comptime_stmts;
+    size_t count, capacity;
+  } out_replacements;
+  ssize_t comptimetype_counter;
+} CorrectionContext;
+typedef struct {
+  TSNode *items;
+  size_t count, capacity;
+} OutReplacements;
+static void correct_tree(OutReplacements *out_replacements, TSNode node,
+                         const char *src) {
+  if (ts_node_symbol(node) == sym_call_expression) {
+    // assert(ts_node_symbol(ts_node_child(node, 0)) == sym_identifier);
+    if (ts_node_symbol(ts_node_child(node, 0)) == sym_identifier &&
+        ts_node_is_comptimetype_kw(ts_node_child(node, 0), src)) {
+      nob_da_append(out_replacements, node);
+    }
+  }
+
+  uint32_t n = ts_node_child_count(node);
+  for (uint32_t i = 0; i < n; i++) {
+    correct_tree(out_replacements, ts_node_child(node, i), src);
+  }
+}
+
 static void register_comptime_dependencies(WalkContext *const ctx,
                                            LocalWalkContext local, TSNode node,
                                            const char *src, unsigned depth) {
@@ -808,6 +861,7 @@ static void register_comptime_dependencies(WalkContext *const ctx,
     local.macro_type_specifier_root = &node;
     break;
   case sym_call_expression: /* call exresssion */
+    nob_log(INFO, MAGENTA("=> WITHIN CALL EXPRRR"));
     local.call_expression_root = &node;
     break;
   case sym_preproc_function_def: {
@@ -827,6 +881,8 @@ static void register_comptime_dependencies(WalkContext *const ctx,
     r = parse_comptime_call_expr2(*local.call_expression_root, src);
     nob_log(INFO, BOLD("Parsed _Comptime call : ") "%.*s", r.len, r.start);
   } else if (sym == sym_identifier && ts_node_is_comptimetype_kw(node, src)) {
+    // TODO: remove this branch
+    assert(0 && "unreachable");
     if (!local.macro_type_specifier_root && local.preproc_def_root &&
         local.child_idx == 1)
       fatal("Redefining `_ComptimeType` macro is not supported");
@@ -837,6 +893,16 @@ static void register_comptime_dependencies(WalkContext *const ctx,
         *local.macro_type_specifier_root, src);
 
     nob_log(INFO, BOLD("Parsed _ComptimeType call : ") "%.*s", r.len, r.start);
+  } else if (sym == alias_sym_type_identifier) {
+    Slice type_id = ts_node_range(node, src);
+    if (slice_begins_with(type_id, "_COMPTIMETYPE_")) {
+      Slice out = slice_strip_prefix(type_id, "_COMPTIMETYPE_");
+      ((char *)out.start)[out.len] = '\0';
+      int index = atoi(out.start);
+      nob_log(INFO, "Found comptimetype placeholder %d", index);
+      assert(index < ctx->comptimetype_stmts.count);
+      r = ctx->comptimetype_stmts.items[index];
+    }
   }
 
   if (r.start) {
@@ -923,7 +989,6 @@ static void register_comptime_dependencies(WalkContext *const ctx,
 static void strip_comptime_dependencies(WalkContext *const ctx,
                                         LocalWalkContext local, TSNode node,
                                         const char *src, unsigned depth) {
-
   TSSymbol sym = ts_node_symbol(node);
   switch (sym) {
   case sym_identifier: { // identifier
@@ -1016,14 +1081,60 @@ int run_file(const char *filename, Context *ctx) {
                                         ctx->raw_source->count);
 
   debug_tree(tree, ctx->raw_source->items, 0);
-  TSNode root = ts_tree_root_node(tree);
+
+  OutReplacements corrections = {0};
+  correct_tree(&corrections, ts_tree_root_node(tree), ctx->raw_source->items);
+
+  String_Builder processed_source = {0};
+  char *_cursor = ctx->raw_source->items;
+  int comptimetype_counter = 0;
+
+  // struct {
+  //   Slice *items;
+  //   size_t count, capacity;
+  // } comptimetypes = {0};
   WalkContext walk_ctx = (WalkContext){0};
 
+  nob_da_foreach(TSNode, node, &corrections) {
+
+    Slice r = ts_node_range(*node, ctx->raw_source->items);
+
+    if (_cursor >= r.start)
+      continue;
+
+    assert(_cursor < r.start && "cursor is ahead of comptime slice");
+
+    ssize_t offset = r.start - _cursor;
+    assert(offset >= 0);
+    // save comptimetype definition:
+    assert(walk_ctx.comptimetype_stmts.count == comptimetype_counter);
+    da_append(&walk_ctx.comptimetype_stmts, r);
+
+    nob_sb_append_buf(&processed_source, _cursor, offset);
+    nob_sb_appendf(&processed_source, "_COMPTIMETYPE_%d",
+                   comptimetype_counter++);
+    _cursor = r.start + r.len; // jump over the comptime slice
+  }
+  ssize_t _offset = ctx->raw_source->items + ctx->raw_source->count - _cursor;
+  assert(_offset >= 0);
+  nob_sb_append_buf(&processed_source, _cursor, _offset);
+
+  const char *tree_source = processed_source.items;
+  nob_log(INFO, GREEN("CLEAN TREE:: "));
+  nob_log(INFO, GREEN("%.*s"), processed_source.count, processed_source.items);
+  TSTree *clean_tree = ts_parser_parse_string(
+      cparser, NULL, processed_source.items, processed_source.count);
+
+  debug_tree(clean_tree, processed_source.items, 0);
+  nob_log(INFO, GREEN("^^^^^^^^^^^^^^"));
+
+  TSNode root = ts_tree_root_node(clean_tree);
+
   register_comptime_dependencies(&walk_ctx, (LocalWalkContext){0}, root,
-                                 ctx->raw_source->items, 0);
+                                 tree_source, 0);
 
   strip_comptime_dependencies(&walk_ctx, (LocalWalkContext){0}, root,
-                              ctx->raw_source->items, 0);
+                              tree_source, 0);
 
   // C_FileBuilder runner = {0};
   String_Builder runner_definitions = {0};
@@ -1045,7 +1156,7 @@ int run_file(const char *filename, Context *ctx) {
   }
 
   String_Builder stripped_input_source = {0};
-  char *cursor = ctx->raw_source->items;
+  char *cursor = (char *)tree_source;
   nob_da_foreach(Slice, it, &walk_ctx.to_be_removed) {
     // append everything until here to the source
     // TODO: it should be ok for the same root_slice to contain multiple
@@ -1067,7 +1178,7 @@ int run_file(const char *filename, Context *ctx) {
     cursor = it->start + it->len; // jump over the comptime slice
   }
 
-  ssize_t offset = ctx->raw_source->items + ctx->raw_source->count - cursor;
+  ssize_t offset = processed_source.items + processed_source.count - cursor;
   assert(offset >= 0);
   nob_sb_append_buf(&stripped_input_source, cursor, offset);
   nob_log(INFO, BOLD("\n\nAmalgamated stripped file: \n") "%.*s",
@@ -1140,6 +1251,8 @@ int run_file(const char *filename, Context *ctx) {
                     walk_ctx.out_h.count);
 
   ts_tree_delete(tree);
+  ts_tree_delete(clean_tree);
+
   ts_parser_delete(cparser);
   sb_free(walk_ctx.out_h);
   nob_temp_rewind(_mark);

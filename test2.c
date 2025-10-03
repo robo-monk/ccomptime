@@ -7,18 +7,18 @@
 #include "deps/hashmap/hashmap.h"
 
 HashMap _func_defs = {0};
-void _comptime_polymorph_type(_ComptimeCtx _ComptimeCtx) {
-  _ComptimeCtx.Inline.appendf("int");
-}
+// void _comptime_polymorph_type(_ComptimeCtx _ComptimeCtx) {
+//   _ComptimeCtx.Inline.appendf("int");
+// }
 
-_ComptimeType(_comptime_polymorph_type(_ComptimeCtx)) test() { return 1; }
+// _ComptimeType(_comptime_polymorph_type(_ComptimeCtx)) test() { return 1; }
 
-void _polymorphic_result(_ComptimeCtx _ComptimeCtx, const char *t,
-                         const char *e) {
+void _polymorphic_result(_ComptimeCtx _ComptimeCtx, const char *t) {
+  const char *e = "char*";
   const char *struct_sign =
-      nob_temp_sprintf("typedef struct { union {%s value; %s error;} as; bool"
-                       "is_ok; } Result_%s_%s;",
-                       t, e, t, e);
+      nob_temp_sprintf("typedef struct { union {%s value; %s error;} as; int "
+                       "is_ok; } Result_%s;",
+                       t, e, t);
 
   if (!hashmap_get(&_func_defs, (char *)struct_sign)) {
     hashmap_put(&_func_defs, (char *)struct_sign, (void *)1);
@@ -26,18 +26,22 @@ void _polymorphic_result(_ComptimeCtx _ComptimeCtx, const char *t,
     fprintf(_Comptime_FP, "\n%s\n", struct_sign);
   }
 
-  _ComptimeCtx.Inline.appendf("Result_%s_%s", t, e);
+  _ComptimeCtx.Inline.appendf("Result_%s", t);
 }
 
 // #define String char *
 // #define Result(T, E) _ComptimeType(_polymorphic_result(_ComptimeCtx, #T, #E))
-#define Result(T) _ComptimeType(_polymorphic_result(_ComptimeCtx, #T, char *))
+// #define Result(T, E) _ComptimeType(_polymorphic_result(_ComptimeCtx, T))
 // #define ResultIntInt() Result(int, int)
 
 // _ComptimeType(_comptime_polymorph_type(_ComptimeCtx)) test5() {
-Result(int) test5() {
+// Result(int, int) test5() {
+// _Comptime(_polymorphic_result(_ComptimeCtx, "char*")) test5() {
+
+void test930(_ComptimeCtx _ComptimeCtx, int i) {}
+
+_ComptimeType(_polymorphic_result(_ComptimeCtx, "int")) test5() {
   if (true) {
-    return "hi";
   }
 }
 

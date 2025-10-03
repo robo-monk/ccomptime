@@ -65,7 +65,7 @@ static bool link_app(const char *extra_cflags) {
   // Compiler + common flags
   nob_cc(&cmd);
   nob_cc_flags(&cmd);
-  nob_cmd_append(&cmd, "-std=c11", "-O3", "-Wall");
+  nob_cmd_append(&cmd, "-std=c11", "-O0", "-Wall");
   nob_cmd_append(&cmd, "-fsanitize=address,undefined", "-g");
   if (extra_cflags && *extra_cflags)
     nob_cmd_append(&cmd, extra_cflags);
