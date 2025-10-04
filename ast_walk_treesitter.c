@@ -1214,6 +1214,7 @@ int run_file(const char *filename, Context *ctx) {
   nob_cmd_append(&build_cmd, "runner.templ.c");
   // nob_cmd_append(&build_cmd, static_obj_filename.items);
   nob_cmd_append(&build_cmd, "-o", ctx->runner_exepath);
+  // nob_cmd_append(&build_cmd, "-E");
   nob_cmd_append(
       &build_cmd,
       temp_sprintf("-D_INPUT_PROGRAM_PATH=\"%s\"", ctx->stripped_source_path),
@@ -1272,10 +1273,6 @@ int main(int argc, char **argv) {
 
   nob_log(INFO, "Received %d arguments", argc);
   nob_log(INFO, "Using compiler %s", Parsed_Argv_compiler_name(&parsed_argv));
-
-  Nob_Cmd final = {0};
-  nob_cmd_append(&final, Parsed_Argv_compiler_name(&parsed_argv));
-  cmd_append_arg_indeces(&parsed_argv, &parsed_argv.flags, &final);
 
   struct {
     const char **items;
@@ -1342,6 +1339,7 @@ int main(int argc, char **argv) {
       exit(1);
     }
 
+    // build_compile_base_command(cmd, )
     // nob_log(INFO, "Preprocessing source");
     // run_preprocess_cmd_for_source(&parsed_argv, input_filename,
     //                               ctx.preprocessed_path);
@@ -1381,12 +1379,18 @@ int main(int argc, char **argv) {
     da_append(&files_to_remove, ctx.final_out_path);
   }
 
-  // if (!cmd_run(&final)) {
-  //   nob_log(ERROR, "failed to compile final output");
-  //   return 1;
-  // } else {
-  //   nob_log(INFO, "Successfuly compiled final output");
-  // }
+  Nob_Cmd final = {0};
+  nob_cmd_append(&final, Parsed_Argv_compiler_name(&parsed_argv));
+  cmd_append_arg_indeces(&parsed_argv, &parsed_argv.input_files, &final);
+  cmd_append_arg_indeces(&parsed_argv, &parsed_argv.output_files, &final);
+  cmd_append_arg_indeces(&parsed_argv, &parsed_argv.flags, &final);
+
+  if (!cmd_run(&final)) {
+    nob_log(ERROR, "failed to compile final output");
+    return 1;
+  } else {
+    nob_log(INFO, "Successfuly compiled final output");
+  }
 
   // -- CLEANUP --
   nob_log(INFO, "Cleaning up %zu intermediate files", files_to_remove.count);

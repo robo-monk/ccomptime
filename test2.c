@@ -23,7 +23,8 @@ void _polymorphic_result(_ComptimeCtx _ComptimeCtx, const char *t) {
   if (!hashmap_get(&_func_defs, (char *)struct_sign)) {
     hashmap_put(&_func_defs, (char *)struct_sign, (void *)1);
     printf("\n ~~ Generating struct sign %s\n", struct_sign);
-    fprintf(_Comptime_FP, "\n%s\n", struct_sign);
+    // fprintf(_Comptime_FP, "\n%s\n", struct_sign);
+    _ComptimeCtx.TopLevel.appendf("%s", struct_sign);
   }
 
   _ComptimeCtx.Inline.appendf("Result_%s", t);
@@ -43,6 +44,12 @@ void test930(_ComptimeCtx _ComptimeCtx, int i) {}
 _ComptimeType(_polymorphic_result(_ComptimeCtx, "int")) test5() {
   if (true) {
   }
+}
+
+int main() {
+  int x = 10 + _Comptime(_ComptimeCtx.Inline.appendf("5"));
+  printf("hello! %d\n", x);
+  return x;
 }
 
 // STRAT 1: replace all _ComptimeType(...) with _COMPTIME_TYPE so tree-sitter

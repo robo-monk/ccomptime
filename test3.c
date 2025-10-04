@@ -21,8 +21,8 @@ void _comptime_polymorph_type(_ComptimeCtx _ComptimeCtx) {
 
 _ComptimeType(_comptime_polymorph_type(_ComptimeCtx, T)) test() { return 1; }
 
-int main2() {
-  int x = 10 + a + test();
-  printf("hello!\n");
+int main() {
+  int x = 10 + a + test() + _Comptime(_ComptimeCtx.Inline.appendf("5"));
+  printf("hello! %d\n", x);
   return x;
 }

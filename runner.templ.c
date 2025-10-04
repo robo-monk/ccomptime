@@ -1,5 +1,11 @@
-// #if defined(_INPUT_PROGRAM_PATH) && defined(_OUTPUT_HEADERS_PATH) &&           \
-//     defined(_INPUT_COMPTIME_DEFS_PATH) && defined(_INPUT_COMPTIME_MAIN_PATH)
+// #define _INPUT_PROGRAM_PATH "test2.c"
+// #define _OUTPUT_HEADERS_PATH ""
+// #define _INPUT_COMPTIME_DEFS_PATH "test2.cc-runner-defs.c"
+// #define _INPUT_COMPTIME_MAIN_PATH "test2.cc-runner-main.c"
+
+#if defined(_INPUT_PROGRAM_PATH) && defined(_OUTPUT_HEADERS_PATH) &&           \
+    defined(_INPUT_COMPTIME_DEFS_PATH) && defined(_INPUT_COMPTIME_MAIN_PATH)
+
 #include <assert.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -24,6 +30,7 @@ typedef struct {
 
 typedef struct {
   _Comptime_Buffer_Vtable Inline;
+  _Comptime_Buffer_Vtable TopLevel;
   int _StatementIndex;
 } _ComptimeCtx;
 #endif
@@ -70,10 +77,10 @@ int _Comptime__sb_appendf(_Comptime__String_Builder *sb, const char *fmt, ...) {
   return n;
 }
 
-#define __Comptime_Statement_Fn(index, code)                                   \
-  _Comptime__String_Builder _Comptime_Inline_Sb##index = {0};                  \
-  void _Comptime_Buffer_appendf_##index(const char *fmt, ...) {                \
-    _Comptime__String_Builder *sb = &_Comptime_Inline_Sb##index;               \
+#define __Define_Comptime_Buffer(suffix)                                       \
+  _Comptime__String_Builder _Comptime_Buffer_##suffix = {0};                   \
+  void _Comptime_Buffer_appendf_##suffix(const char *fmt, ...) {               \
+    _Comptime__String_Builder *sb = &_Comptime_Buffer_##suffix;                \
     va_list args;                                                              \
     va_start(args, fmt);                                                       \
     int n = vsnprintf(NULL, 0, fmt, args);                                     \
@@ -84,7 +91,11 @@ int _Comptime__sb_appendf(_Comptime__String_Builder *sb, const char *fmt, ...) {
     vsnprintf(dest, n + 1, fmt, args);                                         \
     va_end(args);                                                              \
     sb->count += n;                                                            \
-  };                                                                           \
+  };
+
+#define __Comptime_Statement_Fn(index, code)                                   \
+  __Define_Comptime_Buffer(TopLevel_##index);                                  \
+  __Define_Comptime_Buffer(Inline_##index);                                    \
   void _Comptime_exec##index(_ComptimeCtx _ComptimeCtx) { code; }
 
 // __Comptime_Statement_Fn(0, int a = 1)
@@ -93,19 +104,26 @@ int _Comptime__sb_appendf(_Comptime__String_Builder *sb, const char *fmt, ...) {
 #define __Comptime_Register_Main_Exec(index)                                   \
   __Comptime_wrap_exec(                                                        \
       _Comptime_exec##index,                                                   \
-      (_ComptimeCtx){._StatementIndex = index,                                 \
-                     .Inline = (_Comptime_Buffer_Vtable){                      \
-                         ._sb = &_Comptime_Inline_Sb##index,                   \
-                         .appendf = _Comptime_Buffer_appendf_##index}})
+      (_ComptimeCtx){                                                          \
+          ._StatementIndex = index,                                            \
+          .TopLevel =                                                          \
+              (_Comptime_Buffer_Vtable){                                       \
+                  ._sb = &_Comptime_Buffer_TopLevel_##index,                   \
+                  .appendf = _Comptime_Buffer_appendf_TopLevel_##index},       \
+          .Inline = (_Comptime_Buffer_Vtable){                                 \
+              ._sb = &_Comptime_Buffer_Inline_##index,                         \
+              .appendf = _Comptime_Buffer_appendf_Inline_##index}})
 
 void __Comptime_wrap_exec(void (*fn)(_ComptimeCtx), _ComptimeCtx ctx) {
-  // _ComptimeCtx ctx = {
-  //     .InlineAppendf =
-  // }
   fn(ctx);
-  // fn
   fprintf(_Comptime_FP, "#define _COMPTIME_X%d(x) %.*s\n", ctx._StatementIndex,
           (int)ctx.Inline._sb->count, ctx.Inline._sb->items);
+
+  if (ctx.TopLevel._sb->count > 0) {
+    fprintf(_Comptime_FP, "/* top level from comptime#%d */\n%.*s\n",
+            ctx._StatementIndex, (int)ctx.TopLevel._sb->count,
+            ctx.TopLevel._sb->items);
+  }
 }
 
 #define main _User_main // overwrite the entrypoint of the user program
@@ -132,8 +150,7 @@ int main(void) {
   fclose(_Comptime_FP);
 }
 
-// #else
-// #error \
-//     "please define _INPUT_PROGRAM_PATH and _OUTPUT_HEADERS_PATH and
-//     _INPUT_COMPTIME_DEFS_PATH and _INPUT_COMPTIME_MAIN_PATH "
-// #endif
+#else
+#error                                                                         \
+    "please define _INPUT_PROGRAM_PATH and _OUTPUT_HEADERS_PATH and _INPUT_COMPTIME_DEFS_PATH and _INPUT_COMPTIME_MAIN_PATH "
+#endif
