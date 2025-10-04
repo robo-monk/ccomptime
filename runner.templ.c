@@ -93,8 +93,9 @@ int _Comptime__sb_appendf(_Comptime__String_Builder *sb, const char *fmt, ...) {
     sb->count += n;                                                            \
   };
 
+__Define_Comptime_Buffer(TopLevel);
+
 #define __Comptime_Statement_Fn(index, code)                                   \
-  __Define_Comptime_Buffer(TopLevel_##index);                                  \
   __Define_Comptime_Buffer(Inline_##index);                                    \
   void _Comptime_exec##index(_ComptimeCtx _ComptimeCtx) { code; }
 
@@ -104,26 +105,19 @@ int _Comptime__sb_appendf(_Comptime__String_Builder *sb, const char *fmt, ...) {
 #define __Comptime_Register_Main_Exec(index)                                   \
   __Comptime_wrap_exec(                                                        \
       _Comptime_exec##index,                                                   \
-      (_ComptimeCtx){                                                          \
-          ._StatementIndex = index,                                            \
-          .TopLevel =                                                          \
-              (_Comptime_Buffer_Vtable){                                       \
-                  ._sb = &_Comptime_Buffer_TopLevel_##index,                   \
-                  .appendf = _Comptime_Buffer_appendf_TopLevel_##index},       \
-          .Inline = (_Comptime_Buffer_Vtable){                                 \
-              ._sb = &_Comptime_Buffer_Inline_##index,                         \
-              .appendf = _Comptime_Buffer_appendf_Inline_##index}})
+      (_ComptimeCtx){._StatementIndex = index,                                 \
+                     .TopLevel =                                               \
+                         (_Comptime_Buffer_Vtable){                            \
+                             ._sb = &_Comptime_Buffer_TopLevel,                \
+                             .appendf = _Comptime_Buffer_appendf_TopLevel},    \
+                     .Inline = (_Comptime_Buffer_Vtable){                      \
+                         ._sb = &_Comptime_Buffer_Inline_##index,              \
+                         .appendf = _Comptime_Buffer_appendf_Inline_##index}})
 
 void __Comptime_wrap_exec(void (*fn)(_ComptimeCtx), _ComptimeCtx ctx) {
   fn(ctx);
   fprintf(_Comptime_FP, "#define _COMPTIME_X%d(x) %.*s\n", ctx._StatementIndex,
           (int)ctx.Inline._sb->count, ctx.Inline._sb->items);
-
-  if (ctx.TopLevel._sb->count > 0) {
-    fprintf(_Comptime_FP, "/* top level from comptime#%d */\n%.*s\n",
-            ctx._StatementIndex, (int)ctx.TopLevel._sb->count,
-            ctx.TopLevel._sb->items);
-  }
 }
 
 #define main _User_main // overwrite the entrypoint of the user program
@@ -146,6 +140,12 @@ int main(void) {
                         "CONCAT(_COMPTIME_X,n)(x)\n");
 
 #include _INPUT_COMPTIME_MAIN_PATH
+
+  if (_Comptime_Buffer_TopLevel.count > 0) {
+    fprintf(_Comptime_FP, "\n/* top level definitions */\n%.*s\n",
+            (int)_Comptime_Buffer_TopLevel.count,
+            _Comptime_Buffer_TopLevel.items);
+  }
   fflush(_Comptime_FP);
   fclose(_Comptime_FP);
 }

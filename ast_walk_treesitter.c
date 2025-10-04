@@ -28,6 +28,8 @@ typedef struct {
   const char *body_src;
 } MacroDefinition;
 
+typedef HashMap MacroDefinitionHashMap;
+
 typedef struct {
   String_Builder definitions;
   String_Builder main;
@@ -507,6 +509,78 @@ typedef struct {
   int child_idx;
 } LocalWalkContext;
 
+static int try_expand_macro_call_expression(TSNode node,
+                                            MacroDefinitionHashMap *macros,
+                                            const char *src,
+                                            String_Builder *expanded) {
+
+  assert(ts_node_symbol(node) == sym_call_expression);
+
+  TSNode identifier = ts_node_child(node, 0);
+  TSSymbol sym = ts_node_symbol(identifier);
+  if (ts_node_symbol(identifier) !=
+      sym_identifier) // could be a field_expression
+    return 0;
+
+  assert(ts_node_symbol(identifier) == sym_identifier);
+
+  Slice id_range = ts_node_range(identifier, src);
+
+  MacroDefinition *macro_def = macros_get(macros, id_range.start, id_range.len);
+  if (!macro_def)
+    return 0;
+
+  TSNode argument_list = ts_node_child(node, 1);
+  assert(ts_node_symbol(argument_list) ==
+         sym_argument_list /* argument_list */);
+
+  printf(ORANGE("=> expanding macro def :: %.*s\n"),
+         ts_node_range(macro_def->identifier, src).len,
+         ts_node_range(macro_def->identifier, src).start);
+
+  if (macro_def->arg_names.count > 0) {
+    Strings arg_values = strings_new(ts_node_child_count(argument_list));
+
+    for (int i = 0; i < ts_node_child_count(argument_list); i++) {
+      TSNode arg = ts_node_child(argument_list, i);
+      TSSymbol arg_sym = ts_node_symbol(arg);
+
+      if (arg_sym == anon_sym_LPAREN    /* ( */
+          || arg_sym == anon_sym_COMMA  /* , */
+          || arg_sym == anon_sym_RPAREN /* ) */
+      ) {
+        continue;
+      }
+
+      strings_append(&arg_values, ts_node_to_str_view(arg, src));
+    }
+    expand_macro_tree(macro_def, arg_values, expanded);
+  } else {
+    printf("  [MACRO CALL: %.*s]", id_range.len, id_range.start);
+    expand_macro_tree(macro_def, (Strings){0}, expanded);
+  }
+
+  nob_log(INFO, "Macro expansion result: %.*s", (int)expanded->count,
+          expanded->items);
+
+  return 1;
+}
+static int try_expand_type_identifier_expression(TSNode node,
+                                                 MacroDefinitionHashMap *macros,
+                                                 const char *src,
+                                                 String_Builder *expanded) {
+
+  assert(ts_node_symbol(node) == alias_sym_type_identifier);
+  Slice id_range = ts_node_range(node, src);
+  MacroDefinition *macro_def = macros_get(macros, id_range.start, id_range.len);
+  if (!macro_def)
+    return 0;
+
+  expand_macro_tree(macro_def, (Strings){0}, expanded);
+
+  return 1;
+}
+
 typedef void (*WalkerFunction)(WalkContext *const ctx, LocalWalkContext local,
                                TSNode node, const char *src, unsigned depth);
 
@@ -582,20 +656,76 @@ static void try_expand_macro(
   return;
 }
 
-static void parse_preproc_function_def(WalkContext *const ctx, TSNode node,
-                                       const char *src) {
-  MacroDefinition *macro = calloc(1, sizeof(MacroDefinition));
+static int put_macro_def_if_comptime_relevant(
+    MacroDefinitionHashMap *const macros, TSNode macro_identifier,
+    TSNode macro_body, MacroDefinition *macro_def, const char *src) {
+  // we only care if it includes a `comptime`, otherwise skip expansion
+  TSTree *tree = ts_parser_parse_string(
+      cparser, NULL, ts_node_start_len_tuple(macro_body, src));
+
+  if (!has_comptime_identifier(tree, ts_node_range(macro_body, src).start) &&
+      !hashmap_get2(macros, (char *)ts_node_range(macro_identifier, src).start,
+                    ts_node_range(macro_identifier, src).len)) {
+    nob_log(INFO,
+            RED("'%.*s' macro has been proven irrelevant because it does not "
+                "contain the `_Comptime` keyword"),
+            ts_node_len_start_tuple(macro_identifier, src));
+    return 0;
+  } else {
+    nob_log(INFO,
+            GREEN("'%.*s' macro is a *comptime* macro or contains another "
+                  "*comptime* macro"),
+            ts_node_len_start_tuple(macro_identifier, src));
+  }
+  if (!macro_def)
+    macro_def = calloc(1, sizeof(MacroDefinition));
+
+  macro_def->identifier = macro_identifier;
+  macro_def->body_tree = tree;
+  macro_def->body_src = ts_node_range(macro_body, src).start;
+
+  macros_put(macros, ts_node_range(macro_def->identifier, src).start,
+             ts_node_range(macro_def->identifier, src).len, macro_def);
+  return 1;
+}
+static int parse_preproc_def(MacroDefinitionHashMap *const macros, TSNode node,
+                             const char *src) {
+  assert(ts_node_symbol(node) == sym_preproc_def);
 
   uint32_t n = ts_node_child_count(node);
   assert(ts_node_symbol(ts_node_child(node, 0)) ==
          aux_sym_preproc_def_token1 /* #define */);
 
-  macro->identifier = ts_node_child(node, 1); // should be identifier
-  assert(ts_node_symbol(macro->identifier) == sym_identifier);
+  TSNode macro_identifier = ts_node_child(node, 1); // should be identifier
+  assert(ts_node_symbol(macro_identifier) == sym_identifier);
+
+  TSNode body = ts_node_child(node, 2); // should be the body
+  if (ts_node_is_null(body))
+    return 0;
+
+  assert(ts_node_symbol(body) == sym_preproc_arg);
+  return put_macro_def_if_comptime_relevant(macros, macro_identifier, body,
+                                            NULL, src);
+}
+static int parse_preproc_function_def(MacroDefinitionHashMap *const macros,
+                                      TSNode node, const char *src) {
+  assert(ts_node_symbol(node) == sym_preproc_function_def);
+
+  uint32_t n = ts_node_child_count(node);
+  assert(ts_node_symbol(ts_node_child(node, 0)) ==
+         aux_sym_preproc_def_token1 /* #define */);
+
+  TSNode macro_identifier = ts_node_child(node, 1); // should be identifier
+  assert(ts_node_symbol(macro_identifier) == sym_identifier);
 
   TSNode preproc_params = ts_node_child(node, 2); // should be preproc_params
+  if (ts_node_is_null(preproc_params))
+    return 0;
+
+  assert(!ts_node_is_null(preproc_params));
   assert(ts_node_symbol(preproc_params) == sym_preproc_params);
 
+  MacroDefinition *macro = calloc(1, sizeof(MacroDefinition));
   uint32_t param_count = ts_node_child_count(preproc_params);
   for (int i = 0; i < param_count; i++) {
     TSNode param = ts_node_child(preproc_params, i);
@@ -614,36 +744,8 @@ static void parse_preproc_function_def(WalkContext *const ctx, TSNode node,
   TSNode body = ts_node_child(node, 3); // should be the body
   assert(ts_node_symbol(body) == sym_preproc_arg /* preproc_arg */);
 
-  // we only care if it includes a `comptime`, otherwise skip expansion
-  TSTree *tree =
-      ts_parser_parse_string(cparser, NULL, ts_node_start_len_tuple(body, src));
-
-  if (!has_comptime_identifier(tree, ts_node_range(body, src).start) &&
-      !hashmap_get2(&ctx->macros,
-                    (char *)ts_node_range(macro->identifier, src).start,
-                    ts_node_range(macro->identifier, src).len)) {
-    nob_log(INFO,
-            "'%.*s' macro has been proven irrelevant because it does not "
-            "contain the `_Comptime` keyword",
-            ts_node_len_start_tuple(macro->identifier, src));
-  } else {
-    nob_log(INFO,
-            "'%.*s' macro is a *comptime* macro or contains another "
-            "*comptime* macro",
-            ts_node_len_start_tuple(macro->identifier, src));
-  }
-
-  macro->body_tree = tree;
-  macro->body_src = ts_node_range(body, src).start;
-
-  /*
-      printf("\n---- MACRO DEF SUB TREE ----\n");
-      debug_tree(tree, ts_node_range(body, src).start, 4);
-      printf("\n^^^^^^^ MACRO DEF SUB TREE ----\n");
-  */
-
-  macros_put(&ctx->macros, ts_node_range(macro->identifier, src).start,
-             ts_node_range(macro->identifier, src).len, macro);
+  return put_macro_def_if_comptime_relevant(macros, macro_identifier, body,
+                                            macro, src);
 }
 
 static void walk(WalkContext *const ctx, LocalWalkContext local, TSNode node,
@@ -811,12 +913,15 @@ static void walk(WalkContext *const ctx, LocalWalkContext local, TSNode node,
 // To solve this, we do a first pass where we parse All _ComptimeType
 // statements into identifiers and reparse the tree
 typedef struct {
-  struct {
-    TSNode *comptime_stmts;
-    size_t count, capacity;
-  } out_replacements;
-  ssize_t comptimetype_counter;
-} CorrectionContext;
+  TSNode node;
+  Nob_String_View with;
+} NodeReplacement;
+
+typedef struct {
+  NodeReplacement *items;
+  size_t count, capacity;
+} NodeReplacements;
+
 typedef struct {
   TSNode *items;
   size_t count, capacity;
@@ -824,7 +929,11 @@ typedef struct {
 static void correct_tree(OutReplacements *out_replacements, TSNode node,
                          const char *src) {
   if (ts_node_symbol(node) == sym_call_expression) {
-    // assert(ts_node_symbol(ts_node_child(node, 0)) == sym_identifier);
+    if (ts_node_symbol(ts_node_child(node, 0)) == sym_identifier &&
+        ts_node_is_comptimetype_kw(ts_node_child(node, 0), src)) {
+      nob_da_append(out_replacements, node);
+    }
+  } else if (ts_node_symbol(node) == sym_macro_type_specifier) {
     if (ts_node_symbol(ts_node_child(node, 0)) == sym_identifier &&
         ts_node_is_comptimetype_kw(ts_node_child(node, 0), src)) {
       nob_da_append(out_replacements, node);
@@ -837,16 +946,219 @@ static void correct_tree(OutReplacements *out_replacements, TSNode node,
   }
 }
 
+static void clean_include_directives(OutReplacements *out_replacements,
+                                     TSNode node, const char *src) {
+  if (ts_node_symbol(node) == sym_preproc_include) {
+    Slice r = ts_node_range(node, src);
+    nob_log(INFO, BOLD("#include ") RED("%.*s"), r.len, r.start);
+    nob_da_append(out_replacements, node);
+  }
+
+  uint32_t n = ts_node_child_count(node);
+  for (uint32_t i = 0; i < n; i++) {
+    clean_include_directives(out_replacements, ts_node_child(node, i), src);
+  }
+}
+
+TSTree *apply_replacements_to_tree(
+    OutReplacements *replacements, TSTree *tree, const char *tree_src,
+    int tree_src_len, String_Builder *out_source,
+    void (*mapper_fn)(String_Builder *out_source, TSNode node,
+                      const char *tree_src, void *user_args),
+    void *user_args) {
+
+  // correct_tree(&corrections, ts_tree_root_node(tree), tree_src);
+  char *cursor = (char *)tree_src;
+
+  nob_da_foreach(TSNode, node, replacements) {
+    Slice r = ts_node_range(*node, tree_src);
+
+    if (cursor >= r.start)
+      continue;
+
+    assert(cursor < r.start && "cursor is ahead of slice");
+
+    ssize_t offset = r.start - cursor;
+    assert(offset >= 0);
+    if (mapper_fn) {
+      mapper_fn(out_source, *node, tree_src, user_args);
+    }
+    cursor = (char *)r.start + r.len; // jump over the comptime slice
+  }
+  ssize_t _offset = tree_src + tree_src_len - cursor;
+  assert(_offset >= 0);
+  nob_sb_append_buf(out_source, cursor, _offset);
+
+  ts_tree_delete(tree);
+
+  const char *tree_source = out_source->items;
+  TSTree *clean_tree = ts_parser_parse_string(cparser, NULL, out_source->items,
+                                              out_source->count);
+
+  return clean_tree;
+}
+
+TSTree *apply_node_replacements_to_tree(NodeReplacements *replacements,
+                                        TSTree *tree, const char *tree_src,
+                                        int tree_src_len,
+                                        String_Builder *out_source) {
+
+  // correct_tree(&corrections, ts_tree_root_node(tree), tree_src);
+  char *cursor = (char *)tree_src;
+
+  if (replacements->count == 0) {
+    nob_log(WARNING, YELLOW("No replacements performed for tree"));
+    return tree;
+  }
+  // nob_da_foreach(NodeReplacement, r, replacements) {
+  nob_da_foreach(NodeReplacement, repl, replacements) {
+    TSNode node = repl->node;
+    Nob_String_View with = repl->with;
+
+    Slice r = ts_node_range(node, tree_src);
+    // if (cursor > r.start)
+    //   continue;
+
+    assert(cursor < r.start && "cursor is ahead of slice");
+
+    ssize_t offset = r.start - cursor;
+
+    if (offset) {
+      nob_sb_append_buf(out_source, cursor, offset);
+    }
+    assert(offset >= 0);
+    if (with.count) {
+      nob_sb_append_buf(out_source, with.data, with.count);
+    }
+
+    // if (mapper_fn) {
+    //   mapper_fn(out_source, node, tree_src, user_args);
+    // }
+    cursor = (char *)r.start + r.len; // jump over the comptime slice
+  }
+  ssize_t _offset = tree_src + tree_src_len - cursor;
+  assert(_offset >= 0);
+  nob_sb_append_buf(out_source, cursor, _offset);
+
+  ts_tree_delete(tree);
+
+  const char *tree_source = out_source->items;
+  TSTree *clean_tree = ts_parser_parse_string(cparser, NULL, out_source->items,
+                                              out_source->count);
+
+  return clean_tree;
+}
+// input tree is going to get deleted
+// usage: TSTree t = ...
+// t = clean_include_directives_tree(t);
+// void _aux_clean(String_Builder *out_source, TSNode node, const char *src, )
+// {}
+
+TSTree *clean_include_directives_tree(TSTree *tree, const char *tree_src,
+                                      int tree_src_len,
+                                      String_Builder *out_source) {
+  OutReplacements corrections = {0};
+  clean_include_directives(&corrections, ts_tree_root_node(tree), tree_src);
+  return apply_replacements_to_tree(&corrections, tree, tree_src, tree_src_len,
+                                    out_source, NULL, NULL);
+}
+
+TSTree *correct_comptimetype_tree(TSTree *tree, const char *tree_src,
+                                  int tree_src_len,
+                                  String_Builder *out_source) {
+  OutReplacements corrections = {0};
+  correct_tree(&corrections, ts_tree_root_node(tree), tree_src);
+  return apply_replacements_to_tree(&corrections, tree, tree_src, tree_src_len,
+                                    out_source, NULL, NULL);
+}
+
+static void _expand_macros_tree_node(
+    TSNode node, MacroDefinitionHashMap *macros, const char *src,
+    void (*on_macro_expansion)(TSNode node, String_Builder *expanded,
+                               void *ctx),
+    void *on_macro_expansion_ctx) {
+
+  TSSymbol sym = ts_node_symbol(node);
+
+  // HERE WE PARSE MACRO DEFINITIONS
+  if (sym == sym_preproc_function_def) {
+    int success = parse_preproc_function_def(macros, node, src);
+    nob_log(INFO, "Parsed preproc function def: %d", success);
+    return;
+  }
+
+  if (sym == sym_preproc_def) {
+    int success = parse_preproc_def(macros, node, src);
+    nob_log(INFO, "Parsed preproc def: %d", success);
+    return;
+  }
+
+  // HERE WE PUT EVERY SYMBOL THAT MIGHT BE HIDING
+  // A MACRO BEHIND IT!!!
+  String_Builder expanded = {0};
+  int result = 0;
+  if (sym == sym_call_expression) {
+    result = try_expand_macro_call_expression(node, macros, src, &expanded);
+
+  } else if (sym == alias_sym_type_identifier) {
+    result =
+        try_expand_type_identifier_expression(node, macros, src, &expanded);
+  }
+
+  if (result) {
+    on_macro_expansion(node, &expanded, on_macro_expansion_ctx);
+    nob_log(INFO, MAGENTA("%.*s -> %.*s"), (int)ts_node_range(node, src).len,
+            ts_node_range(node, src).start, (int)expanded.count,
+            expanded.items);
+    // nob_sb_free(expanded);
+  }
+
+  uint32_t n = ts_node_child_count(node);
+  for (uint32_t i = 0; i < n; i++) {
+    _expand_macros_tree_node(ts_node_child(node, i), macros, src,
+                             on_macro_expansion, on_macro_expansion_ctx);
+  }
+}
+
+typedef struct {
+  NodeReplacements replacements;
+} _on_macro_expansion_cb_ctx;
+
+static void _on_macro_expansion_cb(TSNode node, String_Builder *expanded,
+                                   void *_ctx) {
+  _on_macro_expansion_cb_ctx *ctx = _ctx;
+
+  nob_da_append(&ctx->replacements,
+                ((NodeReplacement){.node = node,
+                                   .with = nob_sv_from_parts(
+                                       expanded->items, expanded->count)}));
+
+  nob_log(INFO, "Macro was expanded to %.*s", (int)expanded->count,
+          expanded->items);
+}
+
+TSTree *expand_macros_tree(TSTree *tree, MacroDefinitionHashMap *macros,
+                           const char *tree_src, int tree_src_len,
+                           String_Builder *out_source) {
+
+  _on_macro_expansion_cb_ctx cb_ctx = {.replacements = {0}};
+  _expand_macros_tree_node(ts_tree_root_node(tree), macros, tree_src,
+                           _on_macro_expansion_cb, &cb_ctx);
+  TSTree *mapped_tree = apply_node_replacements_to_tree(
+      &cb_ctx.replacements, tree, tree_src, tree_src_len, out_source);
+  return mapped_tree;
+}
+
 static void register_comptime_dependencies(WalkContext *const ctx,
                                            LocalWalkContext local, TSNode node,
                                            const char *src, unsigned depth) {
   TSSymbol sym = ts_node_symbol(node);
   switch (sym) {
-  case sym_identifier: { // identifier
-    try_expand_macro(node, ctx, local, src, depth,
-                     register_comptime_dependencies);
-    break;
-  }
+  // case sym_identifier: { // identifier
+  //   try_expand_macro(node, ctx, local, src, depth,
+  //                    register_comptime_dependencies);
+  //   break;
+  // }
   case sym_function_definition: { // function_definition
     local.function_definition_root = &node;
     break;
@@ -864,10 +1176,10 @@ static void register_comptime_dependencies(WalkContext *const ctx,
     nob_log(INFO, MAGENTA("=> WITHIN CALL EXPRRR"));
     local.call_expression_root = &node;
     break;
-  case sym_preproc_function_def: {
-    parse_preproc_function_def(ctx, node, src);
-    return;
-  }
+    // case sym_preproc_function_def: {
+    //   parse_preproc_function_def(ctx, node, src);
+    //   return;
+    // }
   }
 
   Slice r = {0};
@@ -881,6 +1193,7 @@ static void register_comptime_dependencies(WalkContext *const ctx,
     r = parse_comptime_call_expr2(*local.call_expression_root, src);
     nob_log(INFO, BOLD("Parsed _Comptime call : ") "%.*s", r.len, r.start);
   } else if (sym == sym_identifier && ts_node_is_comptimetype_kw(node, src)) {
+    debug_tree_node(node, src, depth);
     // TODO: remove this branch
     assert(0 && "unreachable");
     if (!local.macro_type_specifier_root && local.preproc_def_root &&
@@ -897,7 +1210,6 @@ static void register_comptime_dependencies(WalkContext *const ctx,
     Slice type_id = ts_node_range(node, src);
     if (slice_begins_with(type_id, "_COMPTIMETYPE_")) {
       Slice out = slice_strip_prefix(type_id, "_COMPTIMETYPE_");
-      ((char *)out.start)[out.len] = '\0';
       int index = atoi(out.start);
       nob_log(INFO, "Found comptimetype placeholder %d", index);
       assert(index < ctx->comptimetype_stmts.count);
@@ -991,10 +1303,10 @@ static void strip_comptime_dependencies(WalkContext *const ctx,
                                         const char *src, unsigned depth) {
   TSSymbol sym = ts_node_symbol(node);
   switch (sym) {
-  case sym_identifier: { // identifier
-    try_expand_macro(node, ctx, local, src, depth, strip_comptime_dependencies);
-    break;
-  }
+  // case sym_identifier: { // identifier
+  //   try_expand_macro(node, ctx, local, src, depth,
+  //   strip_comptime_dependencies); break;
+  // }
   case sym_function_definition: { // function_definition
     local.function_definition_root = &node;
     break;
@@ -1011,28 +1323,42 @@ static void strip_comptime_dependencies(WalkContext *const ctx,
   case sym_call_expression: /* call exresssion */
     local.call_expression_root = &node;
     break;
-  case sym_preproc_function_def: {
-    parse_preproc_function_def(ctx, node, src);
-    return;
-  }
+    // case sym_preproc_function_def: {
+    //   parse_preproc_function_def(ctx, node, src);
+    //   return;
+    // }
   }
 
   Slice node_slice = ts_node_range(node, src);
   if (sym == sym_identifier &&
       hashmap_get2(&ctx->comptime_dependencies, (char *)node_slice.start,
                    node_slice.len)) {
-    nob_log(INFO, MAGENTA("Within a comptime dependency!"));
+    nob_log(INFO, MAGENTA("Within a comptime dependency :: !"));
 
     // if we are within a function body, then this function cannot be used
     // during the comptime calculation
     //
     // thus we should strip it
     if (local.function_definition_root) {
+
       assert(ts_node_symbol(ts_node_child(*local.function_definition_root,
                                           1)) == sym_function_declarator);
       assert(ts_node_symbol(ts_node_child(
                  ts_node_child(*local.function_definition_root, 1), 0)) ==
              sym_identifier);
+      TSNode func_identifier =
+          ts_node_child(ts_node_child(*local.function_definition_root, 1), 0);
+
+      Slice r = ts_node_range(*local.function_definition_root, src);
+      fwrite(r.start, 1, r.len, stderr);
+      fputc('\n', stderr);
+      nob_log(INFO, ORANGE("Stripping comptime dependent function (%d) '%.*s'"),
+              ts_node_range(*local.function_definition_root, src).len,
+              ts_node_range(*local.function_definition_root, src).len,
+              ts_node_range(*local.function_definition_root, src).start);
+      // ts_node_range(func_identifier, src).len,
+      // ts_node_range(func_identifier, src).start
+
       nob_da_append(&ctx->to_be_removed,
                     ts_node_range(*local.function_definition_root, src));
 
@@ -1077,64 +1403,101 @@ int run_file(const char *filename, Context *ctx) {
   cparser = ts_parser_new();
   ts_parser_set_language(cparser, tree_sitter_c());
 
-  TSTree *tree = ts_parser_parse_string(cparser, NULL, ctx->raw_source->items,
-                                        ctx->raw_source->count);
+  TSTree *raw_tree = ts_parser_parse_string(
+      cparser, NULL, ctx->raw_source->items, ctx->raw_source->count);
 
-  debug_tree(tree, ctx->raw_source->items, 0);
+  debug_tree(raw_tree, ctx->raw_source->items, 0);
 
+  String_Builder pp_source = {0};
+  // expand_macros_tree(raw_tree, ctx->raw_source->items,
+  // ctx->raw_source->count,
+  //                    &pp_source);
+
+  HashMap macros = {0};
+  TSTree *pp_tree =
+      expand_macros_tree(raw_tree, &macros, ctx->raw_source->items,
+                         ctx->raw_source->count, &pp_source);
+
+  nob_log(INFO, GREEN("After macro expansion: \n%.*s\n"), (int)pp_source.count,
+          pp_source.items);
+  // debug_tree(pp_tree, pp_source.items, 0);
   OutReplacements corrections = {0};
-  correct_tree(&corrections, ts_tree_root_node(tree), ctx->raw_source->items);
+  correct_tree(&corrections, ts_tree_root_node(pp_tree), pp_source.items);
+
+  nob_log(INFO, "Gathered %d corrections", corrections.count);
 
   String_Builder processed_source = {0};
-  char *_cursor = ctx->raw_source->items;
+  char *_cursor = pp_source.items;
   int comptimetype_counter = 0;
-
-  // struct {
-  //   Slice *items;
-  //   size_t count, capacity;
-  // } comptimetypes = {0};
   WalkContext walk_ctx = (WalkContext){0};
 
   nob_da_foreach(TSNode, node, &corrections) {
 
-    Slice r = ts_node_range(*node, ctx->raw_source->items);
+    Slice r = ts_node_range(*node, pp_source.items);
 
-    if (_cursor >= r.start)
-      continue;
+    // if (_cursor > r.start)
+    //   continue;
 
-    assert(_cursor < r.start && "cursor is ahead of comptime slice");
+    // assert(_cursor <= r.start && "cursor is ahead of comptime slice");
 
-    ssize_t offset = r.start - _cursor;
+    size_t offset = r.start - _cursor;
     assert(offset >= 0);
+
+    nob_log(INFO, BOLD("[%zu] Correcting _ComptimeType: ") "%.*s", offset,
+            r.len, r.start);
     // save comptimetype definition:
     assert(walk_ctx.comptimetype_stmts.count == comptimetype_counter);
     da_append(&walk_ctx.comptimetype_stmts, r);
 
-    nob_sb_append_buf(&processed_source, _cursor, offset);
+    nob_log(
+        INFO,
+        BOLD("Replacing _ComptimeType with placeholder: ") "%.*s -> "
+                                                           "_COMPTIMETYPE_%d",
+        r.len, r.start, comptimetype_counter);
+
+    nob_log(INFO, "Appending %zu bytes until comptimetype", offset);
+    // nob_log(INFO, "%.*s", _cursor, offset);
+    if (offset > 0) {
+      nob_sb_append_buf(&processed_source, _cursor, offset);
+    }
+
     nob_sb_appendf(&processed_source, "_COMPTIMETYPE_%d",
                    comptimetype_counter++);
     _cursor = r.start + r.len; // jump over the comptime slice
   }
-  ssize_t _offset = ctx->raw_source->items + ctx->raw_source->count - _cursor;
+
+  ssize_t _offset = pp_source.items + pp_source.count - _cursor;
   assert(_offset >= 0);
   nob_sb_append_buf(&processed_source, _cursor, _offset);
 
-  const char *tree_source = processed_source.items;
-  nob_log(INFO, GREEN("CLEAN TREE:: "));
-  nob_log(INFO, GREEN("%.*s"), processed_source.count, processed_source.items);
+  // nob_log(INFO, GREEN("CLEAN TREE:: "));
+  // nob_log(INFO, GREEN("%.*s"), processed_source.count,
+  // processed_source.items);
+
+  nob_log(INFO, PURPLE("After corrections :: \n%.*s"),
+          (int)processed_source.count, processed_source.items);
+
+  // const char *tree_source = processed_source.items;
   TSTree *clean_tree = ts_parser_parse_string(
       cparser, NULL, processed_source.items, processed_source.count);
 
-  debug_tree(clean_tree, processed_source.items, 0);
+  // debug_tree(clean_tree, processed_source.items, 0);
   nob_log(INFO, GREEN("^^^^^^^^^^^^^^"));
 
   TSNode root = ts_tree_root_node(clean_tree);
 
   register_comptime_dependencies(&walk_ctx, (LocalWalkContext){0}, root,
-                                 tree_source, 0);
+                                 processed_source.items, 0);
+  // const char *nul =
+  //     memchr(processed_source.items, '\0', processed_source.count);
+  // if (nul) {
+  //   ptrdiff_t pos = nul - processed_source.items;
+  //   fprintf(stderr, "Early NUL at byte %td of %d\n", pos,
+  //           processed_source.count);
+  // }
 
   strip_comptime_dependencies(&walk_ctx, (LocalWalkContext){0}, root,
-                              tree_source, 0);
+                              processed_source.items, 0);
 
   // C_FileBuilder runner = {0};
   String_Builder runner_definitions = {0};
@@ -1156,17 +1519,19 @@ int run_file(const char *filename, Context *ctx) {
   }
 
   String_Builder stripped_input_source = {0};
-  char *cursor = (char *)tree_source;
+  char *cursor = (char *)processed_source.items;
+  nob_da_foreach(Slice, it, &walk_ctx.to_be_removed) {
+    nob_log(INFO, BLUE("TOBEREMOVED: \n'''\n%.*s\n'''\n"), it->len, it->start);
+  }
   nob_da_foreach(Slice, it, &walk_ctx.to_be_removed) {
     // append everything until here to the source
     // TODO: it should be ok for the same root_slice to contain multiple
     // comptime blocks (currenlty itsnot)
     // we already removed that slice
 
+    nob_log(INFO, RED("Removing: \n'''\n%.*s\n'''\n"), it->len, it->start);
     if (cursor >= it->start)
       continue;
-
-    nob_log(INFO, RED("Removing: \n'''\n%.*s\n'''\n"), it->len, it->start);
     assert(cursor < it->start && "cursor is ahead of comptime slice");
 
     ssize_t offset = it->start - cursor;
@@ -1251,7 +1616,6 @@ int run_file(const char *filename, Context *ctx) {
   write_entire_file(ctx->gen_header_path, walk_ctx.out_h.items,
                     walk_ctx.out_h.count);
 
-  ts_tree_delete(tree);
   ts_tree_delete(clean_tree);
 
   ts_parser_delete(cparser);

@@ -41,9 +41,25 @@ void _polymorphic_result(_ComptimeCtx _ComptimeCtx, const char *t) {
 
 void test930(_ComptimeCtx _ComptimeCtx, int i) {}
 
-_ComptimeType(_polymorphic_result(_ComptimeCtx, "int")) test5() {
+// #define xx _polymorphic_result(_ComptimeCtx, "int")
+
+// _ComptimeType(xx) test5() {
+//   if (true) {
+//   }
+// }
+
+#define xx(t) _ComptimeType(_polymorphic_result(_ComptimeCtx, t))
+
+xx("int") test5() {
   if (true) {
   }
+}
+
+xx("char") test3() {
+  if (true) {
+    return (Result_char){.is_ok = false};
+  }
+  return (Result_char){.as.value = 'a', .is_ok = true};
 }
 
 int main() {

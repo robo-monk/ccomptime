@@ -1457,7 +1457,10 @@ NOBDEF bool nob_proc_wait(Nob_Proc proc) {
 #else
   for (;;) {
     int wstatus = 0;
-    if (waitpid(proc, &wstatus, 0) < 0) {
+    int r = waitpid(proc, &wstatus, 0);
+    if (r < 0) {
+      if (r == -1 && errno == EINTR)
+        continue; // continue if host process is interrupted
       nob_log(NOB_ERROR, "could not wait on command (pid %d): %s", proc,
               strerror(errno));
       return false;
@@ -1527,6 +1530,15 @@ static int nob__proc_wait_async(Nob_Proc proc, int ms) {
 
   int wstatus = 0;
   pid_t pid = waitpid(proc, &wstatus, WNOHANG);
+  // Retry waitpid on EINTR
+  for (;;) {
+    pid = waitpid(proc, &wstatus, WNOHANG);
+    if (pid == -1 && errno == EINTR) {
+      continue; // interrupted by a signal, try again
+    }
+    break;
+  }
+
   if (pid < 0) {
     nob_log(NOB_ERROR, "could not wait on command (pid %d): %s", proc,
             strerror(errno));
