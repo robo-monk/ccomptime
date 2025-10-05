@@ -220,6 +220,7 @@
   (NOB_ASSERT((size_t)index < NOB_ARRAY_LEN(array)), array[(size_t)index])
 
 typedef enum {
+  NOB_VERBOSE = 0,
   NOB_INFO,
   NOB_WARNING,
   NOB_ERROR,
@@ -1625,6 +1626,9 @@ NOBDEF void nob_log(Nob_Log_Level level, const char *fmt, ...) {
     return;
 
   switch (level) {
+  case NOB_VERBOSE:
+    fprintf(stderr, "[VERBOSE] ");
+    break;
   case NOB_INFO:
     fprintf(stderr, "[INFO] ");
     break;
@@ -2337,6 +2341,7 @@ NOBDEF int closedir(DIR *dirp) {
 #define UNUSED NOB_UNUSED
 #define ARRAY_LEN NOB_ARRAY_LEN
 #define ARRAY_GET NOB_ARRAY_GET
+#define VERBOSE NOB_VERBOSE
 #define INFO NOB_INFO
 #define WARNING NOB_WARNING
 #define ERROR NOB_ERROR

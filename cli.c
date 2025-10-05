@@ -37,10 +37,11 @@ typedef enum {
   Compiler_Invalid = -1,
   Compiler_CLANG,
   Compiler_GCC,
+  Compile_TCC,
   _Compiler_Len
 } Compiler;
 
-static const char *CCompiler_Map[] = {"clang", "gcc"};
+static const char *CCompiler_Map[] = {"clang", "gcc", "tcc"};
 
 static_assert(NOB_ARRAY_LEN(CCompiler_Map) == _Compiler_Len,
               "supported_compilers length must match CCompiler enum");

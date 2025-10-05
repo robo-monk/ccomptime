@@ -7,8 +7,8 @@
 #define GRAMMAR_PARSER "deps/tree_sitter/parser.c"
 #define LIB_RT_A BUILD_DIR "libtree-sitter.a"
 #define LIB_GRAMMAR_A BUILD_DIR "libts-c-grammar.a"
-#define APP_OUT BUILD_DIR "tswalk"
-#define APP_SRC "ast_walk_treesitter.c"
+#define APP_OUT BUILD_DIR "ccomptime"
+#define APP_SRC "main.c"
 
 static bool build_tree_sitter_runtime(void) {
   // build/libtree-sitter.a <= lib/src/lib.c
@@ -65,8 +65,17 @@ static bool link_app(const char *extra_cflags) {
   // Compiler + common flags
   nob_cc(&cmd);
   nob_cc_flags(&cmd);
-  nob_cmd_append(&cmd, "-std=c11", "-O0", "-Wall");
-  nob_cmd_append(&cmd, "-fsanitize=address,undefined", "-g");
+
+  nob_cmd_append(&cmd, "-std=c11", "-Wall", "-Wextra");
+
+  const bool DEVELOPMENT = true;
+  if (DEVELOPMENT) {
+    nob_cmd_append(&cmd, "-fsanitize=address,undefined", "-g");
+    nob_cmd_append(&cmd, "-O0");
+  } else {
+    nob_cmd_append(&cmd, "-O3");
+  }
+
   if (extra_cflags && *extra_cflags)
     nob_cmd_append(&cmd, extra_cflags);
 

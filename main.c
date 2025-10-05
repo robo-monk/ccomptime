@@ -18,7 +18,7 @@
 #include <time.h>
 
 /* UTILITY STUFF */
-#define MIN(x, y) x > y ? y : x
+static inline int min_int(int a, int b) { return a < b ? a : b; }
 
 typedef struct {
   const char *start;
@@ -94,6 +94,8 @@ typedef struct {
 } WalkContext;
 
 Slice ts_node_range(TSNode node, const char *src) {
+  assert(src);
+  assert(!ts_node_is_null(node));
   const char *start = src + ts_node_start_byte(node);
   int len = ts_node_end_byte(node) - ts_node_start_byte(node);
   return (Slice){start, len};
@@ -104,11 +106,13 @@ static bool ts_node_is_comptimetype_kw(TSNode node, const char *src);
 
 // static void debug_tree
 static void debug_tree_node(TSNode node, const char *src, int depth) {
+  if (nob_minimal_log_level > NOB_VERBOSE)
+    return;
+
   for (unsigned i = 0; i < depth; i++)
     putchar('.');
 
   if (ts_node_has_error(node)) {
-    // printf(RED("- (%d)"), ts_node_symbol(node));
     printf(RED("[%s] (%d)"), ts_node_type(node), ts_node_symbol(node));
   } else if (ts_node_symbol(node) == sym_identifier &&
              ts_node_is_comptime_kw(node, src)) {
@@ -123,7 +127,7 @@ static void debug_tree_node(TSNode node, const char *src, int depth) {
            ts_node_symbol(node));
   }
 
-  printf(GRAY(" %.*s"), MIN(ts_node_range(node, src).len, 35),
+  printf(GRAY(" %.*s"), min_int(ts_node_range(node, src).len, 35),
          ts_node_range(node, src).start);
 
   printf(GRAY(" [%p]\n"), node.id);
@@ -135,6 +139,8 @@ static void debug_tree_node(TSNode node, const char *src, int depth) {
 }
 
 static void debug_tree(TSTree *tree, const char *src, int depth) {
+  if (nob_minimal_log_level > NOB_VERBOSE)
+    return;
   TSNode root = ts_tree_root_node(tree);
   debug_tree_node(root, src, depth);
 }
@@ -185,9 +191,9 @@ Slice infer_func_type_from_ret(TSNode node, const char *src) {
 }
 
 Slice infer(TSNode node, const char *src) {
-  printf("\n--- Inference on node: ");
+  nob_log(VERBOSE, "\n--- Inference on node: ");
   debug_tree_node(node, src, 0);
-  printf("\n---\n");
+  nob_log(VERBOSE, "\n---\n");
   switch (ts_node_symbol(node)) {
   case sym_primitive_type:
     return ts_node_range(node, src);
@@ -201,6 +207,7 @@ Slice infer(TSNode node, const char *src) {
     } else {
       return infer(type_node, src);
     }
+  }
   case alias_sym_type_identifier:
     return _VOIDPTR_RANGE;
     // return ts_node_range(node, src);
@@ -213,10 +220,9 @@ Slice infer(TSNode node, const char *src) {
     return _CHARPTR_RANGE;
 
   default: {
-    printf("\nCannot infer: Unknown symbol: %d ('%s')\n", ts_node_symbol(node),
-           ts_node_type(node));
+    nob_log(ERROR, "\nCannot infer: Unknown symbol: %d ('%s')\n",
+            ts_node_symbol(node), ts_node_type(node));
     exit(1);
-  }
   }
   }
 }
@@ -241,16 +247,13 @@ static void _expand_macro_node(TSNode node, const char *src, Strings *arg_names,
   case sym_preproc_directive: {
     for (int i = 0; i < arg_names->count; i++) {
       String_View arg_name = arg_names->items[i];
-      // String_View arg_name = {
-      //     .count = preproc_name.count - 1,
-      //     .data = preproc_name.data + 1 // skip the #
-      // };
+
       Slice node_range = {
           .start = ts_node_range(node, src).start + 1,
           .len = ts_node_range(node, src).len - 1, // skip the #
       };
 
-      nob_log(INFO, "~> %.*s", node_range.len, node_range.start);
+      nob_log(VERBOSE, "~> %.*s", node_range.len, node_range.start);
 
       if (node_range.len != arg_name.count)
         continue;
@@ -308,11 +311,11 @@ static void expand_macro_tree(MacroDefinition *macro_def, Strings arg_values,
 
   assert(macro_def != NULL);
   assert(macro_def->arg_names.count == arg_values.count);
-  nob_log(INFO, "------- Expand macro tree with %zu args ---- ",
+  nob_log(VERBOSE, "------- Expand macro tree with %zu args ---- ",
           arg_values.count);
 
   debug_tree(macro_def->body_tree, macro_def->body_src, 4);
-  nob_log(INFO, "^^^^^^^ Expand macro tree with %zu args ^^^^^^^",
+  nob_log(VERBOSE, "^^^^^^^ Expand macro tree with %zu args ^^^^^^^",
           arg_values.count);
 
   TSNode root = ts_tree_root_node(macro_def->body_tree);
@@ -322,7 +325,7 @@ static void expand_macro_tree(MacroDefinition *macro_def, Strings arg_values,
   _expand_macro_node(root, macro_def->body_src, &macro_def->arg_names,
                      &arg_values, &replacements);
 
-  nob_log(INFO, "========= Macro expansion replacements: %zu",
+  nob_log(VERBOSE, "========= Macro expansion replacements: %zu",
           replacements.count);
 
   assert(root_range.start == macro_def->body_src);
@@ -348,7 +351,7 @@ static void expand_macro_tree(MacroDefinition *macro_def, Strings arg_values,
   }
   // flush remaining
   nob_sb_append_buf(out_sb, cursor, root_range.start + root_range.len - cursor);
-  nob_log(INFO, ">> Expanded as %.*s", (int)out_sb->count, out_sb->items);
+  nob_log(VERBOSE, ">> Expanded as %.*s", (int)out_sb->count, out_sb->items);
   // } else {
   // nob_log(NOB_WARNING, "macro does not contain any replacements. sus");
   // }
@@ -413,18 +416,15 @@ Slice parse_comptime_call_expr2(TSNode call_expression_root, const char *src) {
   assert(ts_node_symbol(call_expression_root) == sym_call_expression);
   TSNode argument_list = ts_node_child(call_expression_root, 1);
 
-  printf("\n---->\n");
   debug_tree_node(argument_list, src, 4);
-  printf("\n<----\n");
   assert(ts_node_symbol(argument_list) == sym_argument_list);
   // the code to execute is within the argument_list:
   String_View _comptime_code = ts_node_to_str_view(argument_list, src);
   assert(_comptime_code.count > 2 && "Empty _Comptime are not allowed");
-  nob_log(INFO, "@@@@(%zu)@@@\n %.*s \n@@@ @@@", _comptime_code.count,
+  nob_log(VERBOSE, "@@@@(%zu)@@@\n %.*s \n@@@ @@@", _comptime_code.count,
           (int)_comptime_code.count, _comptime_code.data);
   assert(_comptime_code.data[0] == '(');
-  printf("\n\n\n\n----> %c\n\n\n\n",
-         _comptime_code.data[_comptime_code.count - 1]);
+
   assert(_comptime_code.data[_comptime_code.count - 1] == ')');
   // assert(true);
 
@@ -441,7 +441,7 @@ Slice parse_comptime_call_expr2(TSNode call_expression_root, const char *src) {
 
   return (Slice){.start = start, .len = (int)(end - start + 1)};
 
-  nob_log(INFO, "\n=== FOUND _Comptime CODE ===\n%.*s\n=============",
+  nob_log(VERBOSE, "\n=== FOUND _Comptime CODE ===\n%.*s\n=============",
           (int)(end - start + 1), start);
 }
 
@@ -450,20 +450,13 @@ void parse_comptime_call_expr(WalkContext *const ctx,
   assert(ts_node_symbol(call_expression_root) == sym_call_expression);
   TSNode argument_list = ts_node_child(call_expression_root, 1);
 
-  printf("\n---->\n");
-  debug_tree_node(argument_list, src, 4);
-  printf("\n<----\n");
   assert(ts_node_symbol(argument_list) == sym_argument_list);
   // the code to execute is within the argument_list:
   String_View _comptime_code = ts_node_to_str_view(argument_list, src);
   assert(_comptime_code.count > 2 && "Empty _Comptime are not allowed");
-  nob_log(INFO, "@@@@(%zu)@@@\n %.*s \n@@@ @@@", _comptime_code.count,
-          (int)_comptime_code.count, _comptime_code.data);
+
   assert(_comptime_code.data[0] == '(');
-  printf("\n\n\n\n----> %c\n\n\n\n",
-         _comptime_code.data[_comptime_code.count - 1]);
   assert(_comptime_code.data[_comptime_code.count - 1] == ')');
-  // assert(true);
 
   char *start = (char *)_comptime_code.data + 1; // skip the initial paren;
   char *end = (char *)_comptime_code.data + _comptime_code.count - 2;
@@ -476,7 +469,7 @@ void parse_comptime_call_expr(WalkContext *const ctx,
     end--;
   }
 
-  nob_log(INFO, "\n=== FOUND _Comptime CODE ===\n%.*s\n=============",
+  nob_log(VERBOSE, "\n=== FOUND _Comptime CODE ===\n%.*s\n=============",
           (int)(end - start + 1), start);
 
   // call the function in the main;
@@ -528,9 +521,9 @@ static int try_expand_macro_call_expression(TSNode node,
   assert(ts_node_symbol(argument_list) ==
          sym_argument_list /* argument_list */);
 
-  printf(ORANGE("=> expanding macro def :: %.*s\n"),
-         ts_node_range(macro_def->identifier, src).len,
-         ts_node_range(macro_def->identifier, src).start);
+  nob_log(VERBOSE, ORANGE("=> expanding macro def :: %.*s\n"),
+          ts_node_range(macro_def->identifier, src).len,
+          ts_node_range(macro_def->identifier, src).start);
 
   if (macro_def->arg_names.count > 0) {
     Strings arg_values = strings_new(ts_node_child_count(argument_list));
@@ -550,11 +543,11 @@ static int try_expand_macro_call_expression(TSNode node,
     }
     expand_macro_tree(macro_def, arg_values, expanded);
   } else {
-    printf("  [MACRO CALL: %.*s]", id_range.len, id_range.start);
+    nob_log(VERBOSE, "  [MACRO CALL: %.*s]", id_range.len, id_range.start);
     expand_macro_tree(macro_def, (Strings){0}, expanded);
   }
 
-  nob_log(INFO, "Macro expansion result: %.*s", (int)expanded->count,
+  nob_log(VERBOSE, "Macro expansion result: %.*s", (int)expanded->count,
           expanded->items);
 
   return 1;
@@ -590,7 +583,7 @@ static int put_macro_def_if_comptime_relevant(
   if (!has_comptime_identifier(tree, ts_node_range(macro_body, src).start) &&
       !hashmap_get2(macros, (char *)ts_node_range(macro_identifier, src).start,
                     ts_node_range(macro_identifier, src).len)) {
-    nob_log(INFO,
+    nob_log(VERBOSE,
             RED("'%.*s' macro has been proven irrelevant because it does not "
                 "contain the `_Comptime` keyword"),
             macro_identifier_range.len, macro_identifier_range.start
@@ -598,7 +591,7 @@ static int put_macro_def_if_comptime_relevant(
     );
     return 0;
   } else {
-    nob_log(INFO,
+    nob_log(VERBOSE,
             GREEN("'%.*s' macro is a *comptime* macro or contains another "
                   "*comptime* macro"),
             macro_identifier_range.len, macro_identifier_range.start);
@@ -659,11 +652,11 @@ static int parse_preproc_function_def(MacroDefinitionHashMap *const macros,
     assert(ts_node_symbol(param) == sym_identifier);
     uint32_t start = ts_node_start_byte(param);
     uint32_t end = ts_node_end_byte(param);
-    printf("Param %d: %.*s\n", i, (int)(end - start), src + start);
+    nob_log(VERBOSE, "Param %d: %.*s\n", i, (int)(end - start), src + start);
 
     nob_da_append(&macro->arg_names, ts_node_to_str_view(param, src));
   }
-  printf("got in total of %zu args\n", macro->arg_names.count);
+  nob_log(VERBOSE, "got in total of %zu args\n", macro->arg_names.count);
 
   TSNode body = ts_node_child(node, 3); // should be the body
   assert(ts_node_symbol(body) == sym_preproc_arg /* preproc_arg */);
@@ -696,6 +689,7 @@ typedef struct {
 } OutReplacements;
 static void correct_tree(OutReplacements *out_replacements, TSNode node,
                          const char *src) {
+  assert(src);
   if (ts_node_symbol(node) == sym_call_expression) {
     if (ts_node_symbol(ts_node_child(node, 0)) == sym_identifier &&
         ts_node_is_comptimetype_kw(ts_node_child(node, 0), src)) {
@@ -718,7 +712,7 @@ static void clean_include_directives(OutReplacements *out_replacements,
                                      TSNode node, const char *src) {
   if (ts_node_symbol(node) == sym_preproc_include) {
     Slice r = ts_node_range(node, src);
-    nob_log(INFO, BOLD("#include ") RED("%.*s"), r.len, r.start);
+    nob_log(VERBOSE, BOLD("#include ") RED("%.*s"), r.len, r.start);
     nob_da_append(out_replacements, node);
   }
 
@@ -748,6 +742,8 @@ TSTree *apply_replacements_to_tree(
 
     ssize_t offset = r.start - cursor;
     assert(offset >= 0);
+    if (offset > 0)
+      nob_sb_append_buf(out_source, cursor, offset);
     if (mapper_fn) {
       mapper_fn(out_source, *node, tree_src, user_args);
     }
@@ -775,8 +771,11 @@ TSTree *apply_node_replacements_to_tree(NodeReplacements *replacements,
 
   if (replacements->count == 0) {
     nob_log(WARNING, YELLOW("No replacements performed for tree"));
+    out_source->items = (char *)tree_src;
+    out_source->count = tree_src_len;
     return tree;
   }
+
   // nob_da_foreach(NodeReplacement, r, replacements) {
   nob_da_foreach(NodeReplacement, repl, replacements) {
     TSNode node = repl->node;
@@ -850,13 +849,13 @@ static void _expand_macros_tree_node(
   // HERE WE PARSE MACRO DEFINITIONS
   if (sym == sym_preproc_function_def) {
     int success = parse_preproc_function_def(macros, node, src);
-    nob_log(INFO, "Parsed preproc function def: %d", success);
+    nob_log(VERBOSE, "Parsed preproc function def: %d", success);
     return;
   }
 
   if (sym == sym_preproc_def) {
     int success = parse_preproc_def(macros, node, src);
-    nob_log(INFO, "Parsed preproc def: %d", success);
+    nob_log(VERBOSE, "Parsed preproc def: %d", success);
     return;
   }
 
@@ -874,7 +873,7 @@ static void _expand_macros_tree_node(
 
   if (result) {
     on_macro_expansion(node, &expanded, on_macro_expansion_ctx);
-    nob_log(INFO, MAGENTA("%.*s -> %.*s"), (int)ts_node_range(node, src).len,
+    nob_log(VERBOSE, MAGENTA("%.*s -> %.*s"), (int)ts_node_range(node, src).len,
             ts_node_range(node, src).start, (int)expanded.count,
             expanded.items);
     // nob_sb_free(expanded);
@@ -900,7 +899,7 @@ static void _on_macro_expansion_cb(TSNode node, String_Builder *expanded,
                                    .with = nob_sv_from_parts(
                                        expanded->items, expanded->count)}));
 
-  nob_log(INFO, "Macro was expanded to %.*s", (int)expanded->count,
+  nob_log(VERBOSE, "Macro was expanded to %.*s", (int)expanded->count,
           expanded->items);
 }
 
@@ -947,7 +946,7 @@ static void register_comptime_dependencies(WalkContext *const ctx,
       fatal("Invalid use of _Comptime");
 
     r = parse_comptime_call_expr2(*local.call_expression_root, src);
-    nob_log(INFO, BOLD("Parsed _Comptime call : ") "%.*s", r.len, r.start);
+    nob_log(VERBOSE, BOLD("Parsed _Comptime call : ") "%.*s", r.len, r.start);
   } else if (sym == sym_identifier && ts_node_is_comptimetype_kw(node, src)) {
     debug_tree_node(node, src, depth);
     assert(0 &&
@@ -957,7 +956,7 @@ static void register_comptime_dependencies(WalkContext *const ctx,
     if (slice_begins_with(type_id, "_COMPTIMETYPE_")) {
       Slice out = slice_strip_prefix(type_id, "_COMPTIMETYPE_");
       int index = atoi(out.start);
-      nob_log(INFO, "Found comptimetype placeholder %d", index);
+      nob_log(VERBOSE, "Found comptimetype placeholder %d", index);
       assert(index < ctx->comptimetype_stmts.count);
       r = ctx->comptimetype_stmts.items[index];
     }
@@ -977,7 +976,7 @@ static void register_comptime_dependencies(WalkContext *const ctx,
           ts_node_child(ts_node_child(*local.function_definition_root, 1), 0);
       Slice func_name = ts_node_range(func_identifier, src);
 
-      nob_log(INFO, ORANGE("function %.*s is comptime dependent"),
+      nob_log(VERBOSE, ORANGE("function %.*s is comptime dependent"),
               ts_node_range(func_identifier, src).len,
               ts_node_range(func_identifier, src).start);
 
@@ -985,7 +984,7 @@ static void register_comptime_dependencies(WalkContext *const ctx,
                    func_name.len, (void *)1);
 
     } else if (local.decleration_root) {
-      nob_log(INFO, ORANGE("Stripping top level decleration with comptime"));
+      nob_log(VERBOSE, ORANGE("Stripping top level decleration with comptime"));
       // remove the = and after
       assert(ts_node_symbol(ts_node_child(*local.decleration_root, 1)) ==
              sym_init_declarator);
@@ -997,7 +996,7 @@ static void register_comptime_dependencies(WalkContext *const ctx,
           ts_node_child(ts_node_child(*local.decleration_root, 1), 0);
       Slice var_name = ts_node_range(var_identifier, src);
 
-      nob_log(INFO, ORANGE("decleration %.*s is comptime dependent"),
+      nob_log(VERBOSE, ORANGE("decleration %.*s is comptime dependent"),
               ts_node_range(var_identifier, src).len,
               ts_node_range(var_identifier, src).start);
 
@@ -1009,7 +1008,7 @@ static void register_comptime_dependencies(WalkContext *const ctx,
                                     ts_node_end_byte(var_identifier)};
 
     } else {
-      nob_log(INFO, ORANGE("Stripping top level comptime block"));
+      nob_log(VERBOSE, ORANGE("Stripping top level comptime block"));
     }
 
     da_append(&ctx->comptime_stmts, r);
@@ -1050,7 +1049,7 @@ static void strip_comptime_dependencies(WalkContext *const ctx,
   if (sym == sym_identifier &&
       hashmap_get2(&ctx->comptime_dependencies, (char *)node_slice.start,
                    node_slice.len)) {
-    nob_log(INFO, MAGENTA("Within a comptime dependency :: !"));
+    nob_log(VERBOSE, MAGENTA("Within a comptime dependency :: !"));
 
     // if we are within a function body, then this function cannot be used
     // during the comptime calculation
@@ -1067,9 +1066,9 @@ static void strip_comptime_dependencies(WalkContext *const ctx,
           ts_node_child(ts_node_child(*local.function_definition_root, 1), 0);
 
       Slice r = ts_node_range(*local.function_definition_root, src);
-      fwrite(r.start, 1, r.len, stderr);
-      fputc('\n', stderr);
-      nob_log(INFO, ORANGE("Stripping comptime dependent function (%d) '%.*s'"),
+
+      nob_log(VERBOSE,
+              ORANGE("Stripping comptime dependent function (%d) '%.*s'"),
               ts_node_range(*local.function_definition_root, src).len,
               ts_node_range(*local.function_definition_root, src).len,
               ts_node_range(*local.function_definition_root, src).start);
@@ -1077,12 +1076,12 @@ static void strip_comptime_dependencies(WalkContext *const ctx,
       nob_da_append(&ctx->to_be_removed,
                     ts_node_range(*local.function_definition_root, src));
     } else if (local.decleration_root) {
-      nob_log(INFO, ORANGE("Stripping top level decleration with comptime"));
+      nob_log(VERBOSE, ORANGE("Stripping top level decleration with comptime"));
 
       nob_da_append(&ctx->to_be_removed,
                     ts_node_range(*local.decleration_root, src));
     } else {
-      nob_log(INFO, ORANGE("Stripping top level comptime block"));
+      nob_log(VERBOSE, ORANGE("Stripping top level comptime block"));
 
       nob_da_append(&ctx->to_be_removed,
                     ts_node_range(*local.call_expression_root, src));
@@ -1123,22 +1122,18 @@ int run_file(const char *filename, Context *ctx) {
   debug_tree(raw_tree, ctx->raw_source->items, 0);
 
   String_Builder pp_source = {0};
-  // expand_macros_tree(raw_tree, ctx->raw_source->items,
-  // ctx->raw_source->count,
-  //                    &pp_source);
-
   HashMap macros = {0};
   TSTree *pp_tree =
       expand_macros_tree(raw_tree, &macros, ctx->raw_source->items,
                          ctx->raw_source->count, &pp_source);
 
-  nob_log(INFO, GREEN("After macro expansion: \n%.*s\n"), (int)pp_source.count,
-          pp_source.items);
+  nob_log(VERBOSE, GREEN("After macro expansion: \n%.*s\n"),
+          (int)pp_source.count, pp_source.items);
   // debug_tree(pp_tree, pp_source.items, 0);
   OutReplacements corrections = {0};
   correct_tree(&corrections, ts_tree_root_node(pp_tree), pp_source.items);
 
-  nob_log(INFO, "Gathered %d corrections", corrections.count);
+  nob_log(VERBOSE, "Gathered %d corrections", corrections.count);
 
   String_Builder processed_source = {0};
   char *_cursor = pp_source.items;
@@ -1157,7 +1152,7 @@ int run_file(const char *filename, Context *ctx) {
     size_t offset = r.start - _cursor;
     assert(offset >= 0);
 
-    nob_log(INFO, BOLD("[%zu] Correcting _ComptimeType: ") "%.*s", offset,
+    nob_log(VERBOSE, BOLD("[%zu] Correcting _ComptimeType: ") "%.*s", offset,
             r.len, r.start);
     // save comptimetype definition:
     assert(walk_ctx.comptimetype_stmts.count == comptimetype_counter);
@@ -1169,8 +1164,8 @@ int run_file(const char *filename, Context *ctx) {
                                                            "_COMPTIMETYPE_%d",
         r.len, r.start, comptimetype_counter);
 
-    nob_log(INFO, "Appending %zu bytes until comptimetype", offset);
-    // nob_log(INFO, "%.*s", _cursor, offset);
+    nob_log(VERBOSE, "Appending %zu bytes until comptimetype", offset);
+    // nob_log(VERBOSE, "%.*s", _cursor, offset);
     if (offset > 0) {
       nob_sb_append_buf(&processed_source, _cursor, offset);
     }
@@ -1184,11 +1179,11 @@ int run_file(const char *filename, Context *ctx) {
   assert(_offset >= 0);
   nob_sb_append_buf(&processed_source, _cursor, _offset);
 
-  // nob_log(INFO, GREEN("CLEAN TREE:: "));
-  // nob_log(INFO, GREEN("%.*s"), processed_source.count,
+  // nob_log(VERBOSE, GREEN("CLEAN TREE:: "));
+  // nob_log(VERBOSE, GREEN("%.*s"), processed_source.count,
   // processed_source.items);
 
-  nob_log(INFO, PURPLE("After corrections :: \n%.*s"),
+  nob_log(VERBOSE, PURPLE("After corrections :: \n%.*s"),
           (int)processed_source.count, processed_source.items);
 
   // const char *tree_source = processed_source.items;
@@ -1196,20 +1191,12 @@ int run_file(const char *filename, Context *ctx) {
       cparser, NULL, processed_source.items, processed_source.count);
 
   // debug_tree(clean_tree, processed_source.items, 0);
-  nob_log(INFO, GREEN("^^^^^^^^^^^^^^"));
+  nob_log(VERBOSE, GREEN("^^^^^^^^^^^^^^"));
 
   TSNode root = ts_tree_root_node(clean_tree);
 
   register_comptime_dependencies(&walk_ctx, (LocalWalkContext){0}, root,
                                  processed_source.items, 0);
-  // const char *nul =
-  //     memchr(processed_source.items, '\0', processed_source.count);
-  // if (nul) {
-  //   ptrdiff_t pos = nul - processed_source.items;
-  //   fprintf(stderr, "Early NUL at byte %td of %d\n", pos,
-  //           processed_source.count);
-  // }
-
   strip_comptime_dependencies(&walk_ctx, (LocalWalkContext){0}, root,
                               processed_source.items, 0);
 
@@ -1227,7 +1214,7 @@ int run_file(const char *filename, Context *ctx) {
                    "execute comptime statement #%d\n",
                    comptime_count, comptime_count);
 
-    nob_log(INFO, BOLD("COMPTIME SNIPPET ::") PURPLE("%.*s"), (int)it->len,
+    nob_log(VERBOSE, BOLD("COMPTIME SNIPPET ::") PURPLE("%.*s"), (int)it->len,
             it->start);
     comptime_count++;
   }
@@ -1235,7 +1222,8 @@ int run_file(const char *filename, Context *ctx) {
   String_Builder stripped_input_source = {0};
   char *cursor = (char *)processed_source.items;
   nob_da_foreach(Slice, it, &walk_ctx.to_be_removed) {
-    nob_log(INFO, BLUE("TOBEREMOVED: \n'''\n%.*s\n'''\n"), it->len, it->start);
+    nob_log(VERBOSE, BLUE("TOBEREMOVED: \n'''\n%.*s\n'''\n"), it->len,
+            it->start);
   }
   nob_da_foreach(Slice, it, &walk_ctx.to_be_removed) {
     // append everything until here to the source
@@ -1243,7 +1231,7 @@ int run_file(const char *filename, Context *ctx) {
     // comptime blocks (currenlty itsnot)
     // we already removed that slice
 
-    nob_log(INFO, RED("Removing: \n'''\n%.*s\n'''\n"), it->len, it->start);
+    nob_log(VERBOSE, RED("Removing: \n'''\n%.*s\n'''\n"), it->len, it->start);
     if (cursor >= it->start)
       continue;
     assert(cursor < it->start && "cursor is ahead of comptime slice");
@@ -1251,7 +1239,7 @@ int run_file(const char *filename, Context *ctx) {
     ssize_t offset = it->start - cursor;
     assert(offset >= 0);
 
-    nob_log(INFO, GREEN("Appending: \n'''\n %.*s \n'''\n"), (int)offset,
+    nob_log(VERBOSE, GREEN("Appending: \n'''\n %.*s \n'''\n"), (int)offset,
             cursor);
     nob_sb_append_buf(&stripped_input_source, cursor, offset);
     cursor = it->start + it->len; // jump over the comptime slice
@@ -1260,7 +1248,7 @@ int run_file(const char *filename, Context *ctx) {
   ssize_t offset = processed_source.items + processed_source.count - cursor;
   assert(offset >= 0);
   nob_sb_append_buf(&stripped_input_source, cursor, offset);
-  nob_log(INFO, BOLD("\n\nAmalgamated stripped file: \n") "%.*s",
+  nob_log(VERBOSE, BOLD("\n\nAmalgamated stripped file: \n") "%.*s",
           (int)stripped_input_source.count, stripped_input_source.items);
 
   // save stripped source
@@ -1269,9 +1257,6 @@ int run_file(const char *filename, Context *ctx) {
 
   nob_write_entire_file(ctx->runner_defs_path, runner_definitions.items,
                         runner_definitions.count);
-
-  // const char *runner_main_filename =
-  //     nob_temp_sprintf("%somptime.runner_main", filename);
 
   nob_write_entire_file(ctx->runner_main_path, runner_main.items,
                         runner_main.count);
@@ -1316,10 +1301,9 @@ int run_file(const char *filename, Context *ctx) {
 
   sb_appendf(&walk_ctx.out_h, "/* ---- */// the end. ///* ---- */\n");
 
-  printf("comptime found : %d", walk_ctx.comptime_count);
-  // printf("\n\nGenerated header:\n%s\n", walk_ctx.out_h.items);
+  nob_log(VERBOSE, "comptime found : %d", walk_ctx.comptime_count);
 
-  printf("\n\nGenerated header:\n%s\n", walk_ctx.out_h.items);
+  nob_log(VERBOSE, "\n\nGenerated header:\n%s\n", walk_ctx.out_h.items);
 
   write_entire_file(ctx->runner_main_path, walk_ctx.out_c.main.items,
                     walk_ctx.out_c.main.count);
@@ -1339,15 +1323,12 @@ int run_file(const char *filename, Context *ctx) {
 }
 
 int main(int argc, char **argv) {
-  // if (argc < 2) {
-  //   fprintf(stderr, "usage: %s <file.c>\n", argv[0]);
-  //   return 1;
-  // }
-
   CliArgs parsed_argv = {0};
   if (cli(argc, argv, &parsed_argv) != 0) {
     return 1;
   }
+
+  // nob_minimal_log_level = VERBOSE;
 
   nob_log(INFO, "Received %d arguments", argc);
   nob_log(INFO, "Using compiler %s", Parsed_Argv_compiler_name(&parsed_argv));
@@ -1358,6 +1339,7 @@ int main(int argc, char **argv) {
   } files_to_remove = {0};
 
   nob_da_foreach(int, index, &parsed_argv.input_files) {
+    nob_log(INFO, "Processing input file %s", argv[*index]);
     // -- SETUP CONTEXT --
     const char *input_filename = argv[*index];
     String_Builder raw_source = {0}, preprocessed_source = {0};
@@ -1370,83 +1352,22 @@ int main(int argc, char **argv) {
     Context_fill_paths(&ctx, input_filename);
 
     // -- PREPROCESS INPUT FILE (expand macros) --
-    nob_log(INFO, "Processing %s source as SourceCode", input_filename);
-    // parse_source_file(input_filename, ctx.raw_source);
+    nob_log(VERBOSE, "Processing %s source as SourceCode", input_filename);
     nob_read_entire_file(input_filename, ctx.raw_source);
 
     run_file(input_filename, &ctx);
 
-    // assert(ctx.runner_templ_path);
-    // Nob_Cmd cmd = {0};
-
-    // nob_cmd_append(&cmd, Parsed_Argv_compiler_name(ctx.parsed_argv));
-    // cmd_append_arg_indeces(ctx.parsed_argv, &ctx.parsed_argv->flags, &cmd);
-    // nob_cmd_append(&cmd, "-O0");
-
-    // cmd_append_inputs_except(ctx.parsed_argv, ctx.input_path, &cmd);
-
-    // // nob_cmd_append(&cmd, ctx.runner_cpath);
-    // nob_cmd_append(&cmd, "runner.templ.c");
-
-    // if (!(ctx.parsed_argv->cct_flags & CliComptimeFlag_Debug)) {
-    //   nob_cmd_append(&cmd, "-w");
-    // } else {
-    //   nob_cmd_append(&cmd, "-g", "-fsanitize=address,undefined",
-    //                  "-fno-omit-frame-pointer");
-    // }
-
-    // nob_cmd_append(
-    //     &cmd, "-o", ctx.runner_exepath,
-    //     temp_sprintf("-D_INPUT_PROGRAM_PATH=\"%s\"", ctx.input_path),
-    //     temp_sprintf("-D_INPUT_COMPTIME_DEFS_PATH=\"%s\"",
-    //                  ctx.runner_defs_path),
-    //     temp_sprintf("-D_INPUT_COMPTIME_MAIN_PATH=\"%s\"",
-    //                  ctx.runner_main_path),
-    //     temp_sprintf("-D_OUTPUT_HEADERS_PATH=\"%s\"", ctx.gen_header_path));
-
-    // if (!nob_cmd_run(&cmd)) {
-    //   nob_log(ERROR, "failed to compile runner %s", ctx.runner_templ_path);
-    //   exit(1);
-    // }
-
     Nob_Cmd cmd = {0};
     nob_log(INFO, "Running runner %s", ctx.runner_exepath);
+    printf("=== Compile time logs ===\n");
     nob_cmd_append(&cmd, nob_temp_sprintf("./%s", ctx.runner_exepath));
     if (!nob_cmd_run(&cmd)) {
       nob_log(ERROR, "failed to run runner %s", ctx.runner_templ_path);
       exit(1);
     }
+    fflush(stdout);
+    printf("=== end === \n");
 
-    // build_compile_base_command(cmd, )
-    // nob_log(INFO, "Preprocessing source");
-    // run_preprocess_cmd_for_source(&parsed_argv, input_filename,
-    //                               ctx.preprocessed_path);
-
-    // nob_log(INFO, "Rewrote argv %s -> %s", input_filename,
-    //         ctx.preprocessed_path);
-
-    // nob_read_entire_file(ctx.preprocessed_path, ctx.preprocessed_source);
-
-    // -- GENERATE AND RUN THE RUNNER --
-    // log_info("Generating runner c");
-    // emit_runner_tu(&ctx, &comptime_blocks);
-    // compile_and_run_runner(&ctx);
-
-    // String_Builder repls2 = {0};
-    // substitute_block_values(&ctx, &comptime_blocks, &repls2);
-
-    // log_info("WRTING FINAL OUTPUT FILE %s (%zu)bytes ",
-    // ctx.final_out_path,
-    //          repls2.count);
-    // write_entire_file(ctx.final_out_path, repls2.items, repls2.count);
-
-    // // -- APPEND FINAL OUTPUT FILE TO ARGV --
-    // nob_cmd_append(&final, ctx.final_out_path);
-
-    // log_info("Appended final output file %s to final argv",
-    // ctx.final_out_path);
-
-    // log_info("Scheduling intermediate files for deletion");
     da_append(&files_to_remove, ctx.preprocessed_path);
     da_append(&files_to_remove, ctx.runner_main_path);
     da_append(&files_to_remove, ctx.runner_defs_path);
@@ -1480,7 +1401,4 @@ int main(int argc, char **argv) {
       nob_log(INFO, "Keeping intermediate file %s", *f);
     }
   }
-
-  // const char *filename = argv[1];
-  // return run_file(filename);
 }
