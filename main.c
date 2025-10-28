@@ -1110,7 +1110,7 @@ void build_compile_base_command(Nob_Cmd *out, CliArgs *parsed_argv) {
   }
 }
 
-int run_file(const char *filename, Context *ctx) {
+int run_file(Context *ctx) {
   size_t _mark = nob_temp_save();
 
   cparser = ts_parser_new();
@@ -1262,18 +1262,6 @@ int run_file(const char *filename, Context *ctx) {
                         runner_main.count);
 
   Nob_Cmd build_cmd = {0};
-  // build_compile_base_command(&build_cmd, ctx->parsed_argv);
-
-  // String_Builder static_obj_filename = {0};
-  // nob_sb_appendf(&static_obj_filename, "_%s.o", filename);
-  // static_obj_filename.items[static_obj_filename.count] = '\0';
-
-  // nob_cmd_append(&build_cmd, stripped_source_filename);
-  // nob_cmd_append(&build_cmd, "-c");
-  // nob_cmd_append(&build_cmd, "-o", static_obj_filename.items);
-  // if (!nob_cmd_run(&build_cmd))
-  //   fatal("Failed to compile stripped source");
-
   build_compile_base_command(&build_cmd, ctx->parsed_argv);
   nob_cmd_append(&build_cmd, "runner.templ.c");
   // nob_cmd_append(&build_cmd, static_obj_filename.items);
@@ -1355,7 +1343,7 @@ int main(int argc, char **argv) {
     nob_log(VERBOSE, "Processing %s source as SourceCode", input_filename);
     nob_read_entire_file(input_filename, ctx.raw_source);
 
-    run_file(input_filename, &ctx);
+    run_file(&ctx);
 
     Nob_Cmd cmd = {0};
     nob_log(INFO, "Running runner %s", ctx.runner_exepath);

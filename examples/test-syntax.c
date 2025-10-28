@@ -4,12 +4,12 @@
 #include <stdlib.h>
 #include <string.h>
 #define NOB_IMPLEMENTATION
-#include "nob.h"
+#include "../nob.h"
 
-#include "ccomptime.h"
+#include "../ccomptime.h"
 
 #define HASHMAP_IMPLEMENTATION
-#include "deps/hashmap/hashmap.h"
+#include "../deps/hashmap/hashmap.h"
 
 // #define comptime_log(x) _Comptime({ printf("%s\n", x); })
 
@@ -109,12 +109,12 @@ int main() {
 //   return 0;
 // }
 
+_Comptime({printf(
+    "Hi from comptime!\n")}); // this will get executed during compile time
 
-_Comptime({ printf("Hi from comptime!\n") }); // this will get executed during compile time
-
-int main(void) { 
-    int large_fibo = _Comptime({
-        _ComptimeCtx.Inline.appendf("%d", fibonacci(42));
-    }); // 267914296 will be baked in to the executable
-    return 0;
+int main(void) {
+  int large_fibo = _Comptime({
+    _ComptimeCtx.Inline.appendf("%d", fibonacci(42));
+  }); // 267914296 will be baked in to the executable
+  return 0;
 }

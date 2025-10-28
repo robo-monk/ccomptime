@@ -1,7 +1,7 @@
 #include <stdio.h>
 #define HASHMAP_IMPLEMENTATION
-#include "ccomptime.h"
-#include "deps/hashmap/hashmap.h"
+#include "../ccomptime.h"
+#include "../deps/hashmap/hashmap.h"
 #include "test3.c.h"
 
 int fibonnaci(int n) {
@@ -12,7 +12,6 @@ int fibonnaci(int n) {
 
 int a = _Comptime(_ComptimeCtx.Inline.appendf("42"));
 int b = _Comptime(_ComptimeCtx.Inline.appendf("%d", fibonnaci(4)));
-// b = a;
 
 void _comptime_polymorph_type(_ComptimeCtx _ComptimeCtx) {
   printf("generating polymorph type\n");

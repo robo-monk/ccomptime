@@ -7,6 +7,15 @@ A drop-in replacement for `clang` that adds compile-time code execution to C.
 
 `ccomptime` allows you to run C code at compile time using `comptime`, `inline_comptime` directives. The code executes during compilation and can generate code, files, and anything really. You keep all the footguns C gives you even during compilation time!
 
+## TODOs
+[ ] Auto-detect the generated header and add it to the original file if not present (so it compiles)
+[ ] Do not generate a header in the case that the input does not contain any comptime blocks
+[ ] Currently the runner.templ.c is not getting properly linked unless we are compiling something from the root of the project (we have to find the absolute path of it)
+[ ] Investigate if we can
+[ ] `ComptimeCtx.InferredType`
+[ ] Add tests
+[ ] Add proper examples
+
 
 ## Usage
 

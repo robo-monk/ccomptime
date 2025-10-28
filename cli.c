@@ -219,26 +219,6 @@ void cmd_append_arg_indeces(CliArgs *pa, ArgIndexList *pointers, Cmd *cmd) {
   }
 }
 
-static void run_preprocess_cmd_for_source(CliArgs *parsed_argv,
-                                          const char *input_filename,
-                                          const char *output_filename) {
-
-  static Nob_Cmd pp_cmd = {0};
-
-  nob_log(INFO, "Preprocessing %s", input_filename);
-  nob_cmd_append(&pp_cmd, Parsed_Argv_compiler_name(parsed_argv));
-  nob_cmd_append(&pp_cmd, input_filename);
-  cmd_append_arg_indeces(parsed_argv, &parsed_argv->flags, &pp_cmd);
-
-  nob_cmd_append(&pp_cmd, "-E", "-CC");
-  nob_cmd_append(&pp_cmd, "-o", output_filename);
-
-  if (!nob_cmd_run(&pp_cmd)) {
-    nob_log(ERROR, "failed to process TU %s", input_filename);
-    exit(1);
-  }
-}
-
 int cli(int argc, char **argv, CliArgs *parsed_argv) {
   nob_minimal_log_level = ERROR;
   if (argc < 2) {
