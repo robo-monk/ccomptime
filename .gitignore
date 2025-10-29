@@ -1,4 +1,9 @@
 build/
 nob
-nob.old
+*.old
 .zed/
+tests/**/*.txt
+tests/**/out
+*.dSYM
+test
+
