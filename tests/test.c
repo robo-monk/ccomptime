@@ -8,7 +8,7 @@
   X
 
 int main(int argc, char **argv) {
-  nob_minimal_log_level = NOB_ERROR;
+  nob_minimal_log_level = NOB_INFO;
   NOB_GO_REBUILD_URSELF_PLUS(argc, argv,
                              //
                              "tests/simple_inline_comptime/test.c",

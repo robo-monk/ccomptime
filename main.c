@@ -42,6 +42,35 @@ Slice slice_strip_prefix(Slice s, const char *prefix) {
   return out;
 }
 
+const char *get_parent_dir(const char *filepath) {
+  static char buffer[1024];
+  const char *last_slash = strrchr(filepath, '/');
+
+#ifdef _WIN32
+  const char *last_bslash = strrchr(filepath, '\\');
+  if (last_bslash && (!last_slash || last_bslash > last_slash))
+    last_slash = last_bslash;
+#endif
+
+  if (!last_slash) {
+    // No slash found → current directory
+    return ".";
+  }
+
+  size_t len = last_slash - filepath;
+  if (len >= sizeof(buffer))
+    len = sizeof(buffer) - 1;
+
+  memcpy(buffer, filepath, len);
+  buffer[len] = '\0';
+  return buffer;
+}
+
+const char *resolve(const char *FILE_NAME, const char *path) {
+  return nob_temp_sprintf("%s/%s", get_parent_dir(FILE_NAME), path);
+}
+///-----
+
 extern const TSLanguage *tree_sitter_c(void);
 
 TSParser *cparser;
@@ -1263,7 +1292,10 @@ int run_file(Context *ctx) {
 
   Nob_Cmd build_cmd = {0};
   build_compile_base_command(&build_cmd, ctx->parsed_argv);
-  nob_cmd_append(&build_cmd, "runner.templ.c");
+
+  nob_cmd_append(&build_cmd, resolve(__FILE__, "runner.templ.c"));
+  // #include "./runner.templ.embeded"
+  // nob_cmd_append(&build_cmd, "-x", "c", "-", "<<EOF", EMBED_TXT "\nEOF");
   // nob_cmd_append(&build_cmd, static_obj_filename.items);
   nob_cmd_append(&build_cmd, "-o", ctx->runner_exepath);
   // nob_cmd_append(&build_cmd, "-E");

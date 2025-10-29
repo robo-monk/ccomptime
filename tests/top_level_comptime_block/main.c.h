@@ -1,4 +1,4 @@
-/*// @generated - ccomptime™ v0.0.1 - 1761700154 \*/
+/*// @generated - ccomptime™ v0.0.1 - 1761741640 \*/
 #define _CONCAT_(x, y) x##y
 #define CONCAT(x, y) _CONCAT_(x, y)
 #define _Comptime(x) _COMPTIME_X(__COUNTER__, x)

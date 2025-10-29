@@ -3,27 +3,38 @@
 
 A drop-in replacement for `clang` that adds compile-time code execution to C.
 
+
 ## Overview
 
-`ccomptime` allows you to run C code at compile time using `comptime`, `inline_comptime` directives. The code executes during compilation and can generate code, files, and anything really. You keep all the footguns C gives you even during compilation time!
+`ccomptime` allows you to run C code at compile time using `_Comptime`, `_ComptimeType` directives.
 
-## TODOs
-[ ] Auto-detect the generated header and add it to the original file if not present (so it compiles)
-[ ] Do not generate a header in the case that the input does not contain any comptime blocks
-[ ] Currently the runner.templ.c is not getting properly linked unless we are compiling something from the root of the project (we have to find the absolute path of it)
-[ ] Investigate if we can
-[ ] `ComptimeCtx.InferredType`
-[ ] Add tests
-[ ] Add proper examples
+The code executes during compilation and can generate more code, files, and anything really. You keep all the footguns C gives you even during compilation time!
 
 
 ## Usage
 
 ### Building
+#### Bootstrap the build system
 ```bash
 cc nob.c -o nob
+```
+```bash
 ./nob
 ```
+
+#### Run tests
+```bash
+./nob test
+```
+
+## TODOs
+[ ] Auto-detect the generated header and add it to the original file if not present (so it compiles)
+[ ] Do not generate a header in the case that the input does not contain any comptime blocks
+[ ] Currently the runner.templ.c is not getting properly linked unless we are compiling something from the root of the project (I want to embed it in the executable)
+[ ] Investigate if we can `ComptimeCtx.InferredType`
+[x] Add tests
+[ ] Add proper examples
+
 
 ### Using as compiler
 Prepend your clang command with the `ccomptime` cli.
@@ -34,14 +45,14 @@ Thats it, ccomptime will "highjack" the compilation process
 
 ## How it works
 
-1. Preprocesses source files to find `comptime` blocks
+1. Preprocesses source files to find `_Comptime` and `_ComptimeType` blocks
 2. Extracts compile-time code into a separate "runner" program
 3. Compiles and executes the runner to generate the header file with macros replacing each comptime block in the original file
 5. Compiles the final program with regular clang with the generated .h file included
 
 ## Related Projects
 
-While several languages and tools offer compile-time execution, `ccomptime` is unique in bringing full compile-time code execution to C:
+While several languages and tools offer compile-time execution, `ccomptime` is unique in bringing full compile-time code execution to C.
 
 ### Similar Approaches
 - **Zig's `comptime`** - Built-in compile-time execution with similar capabilities, but requires using Zig and also bad support for simple IO operations

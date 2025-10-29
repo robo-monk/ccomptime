@@ -91,6 +91,9 @@ static bool link_app(const char *extra_cflags) {
   return nob_cmd_run(&cmd);
 }
 
+#include <stdio.h>
+#include <stdlib.h>
+
 int main(int argc, char **argv) {
   // Rebuild self if build.c, nob.h changed
   NOB_GO_REBUILD_URSELF_PLUS(argc, argv, "nob.c");
@@ -138,5 +141,21 @@ int main(int argc, char **argv) {
     return 1;
 
   nob_log(INFO, "Built %s", APP_OUT);
+
+  if (argc > 1 && strcmp(argv[1], "test") == 0) {
+    nob_log(INFO, "Running tests…");
+    nob_log(INFO, "Compiling test runner");
+    // compiling test runner
+    Nob_Cmd cmd = {0};
+    nob_cc(&cmd);
+    nob_cc_flags(&cmd);
+    nob_cmd_append(&cmd, "tests/test.c", "-o", BUILD_DIR "test");
+    cmd_run(&cmd);
+
+    // now run the test runner
+    nob_log(INFO, "Running test runner");
+    nob_cmd_append(&cmd, BUILD_DIR "test");
+    cmd_run(&cmd);
+  }
   return 0;
 }
