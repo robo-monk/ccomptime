@@ -118,7 +118,7 @@ static void Context_fill_paths(Context *ctx, const char *original_source) {
   ctx->runner_exepath = leaky_sprintf("%sct-runner", original_source);
 #endif
   ctx->vals_path = leaky_sprintf("%sct-vals.cct_vals", original_source);
-  ctx->final_out_path = leaky_sprintf("%sct-final.i", original_source);
+  ctx->final_out_path = leaky_sprintf("%sct-final.c", original_source);
   ctx->gen_header_path = leaky_sprintf("%s.h", original_source);
 }
 

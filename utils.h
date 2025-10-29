@@ -15,11 +15,11 @@ typedef struct {
   size_t count, capacity;
 } Strings;
 
-void strings_append(Strings *strings, String_View item) {
+static inline void strings_append(Strings *strings, String_View item) {
   nob_da_append(strings, item);
 }
 
-Strings strings_new(size_t capacity) {
+static inline Strings strings_new(size_t capacity) {
   Strings strings = {
       .count = 0,
       .capacity = capacity,

@@ -1,4 +1,4 @@
-/*// @generated - ccomptime™ v0.0.1 - 1761748275 \*/
+/*// @generated - ccomptime™ v0.0.1 - 1761748274 \*/
 #pragma once
 #define _CONCAT_(x, y) x##y
 #define CONCAT(x, y) _CONCAT_(x, y)
@@ -9,4 +9,4 @@
 
 #undef _COMPTIME_X
 #define _COMPTIME_X(n,x) CONCAT(_COMPTIME_X,n)(x)
-#define _COMPTIME_X0(x) 
+#define _COMPTIME_X0(x) 7 * 6

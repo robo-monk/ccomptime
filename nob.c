@@ -8,7 +8,11 @@
 #define LIB_RT_A BUILD_DIR "libtree-sitter.a"
 #define LIB_GRAMMAR_A BUILD_DIR "libts-c-grammar.a"
 #define APP_OUT BUILD_DIR "ccomptime"
-#define APP_SRC "main.c"
+#define APP_SRCS                                                               \
+  (const char *[]) {                                                           \
+    "main.c", "comptime_common.c", "macro_expansion.c", "tree_passes.c"        \
+  }
+#define APP_SRCS_COUNT 4
 
 static bool build_tree_sitter_runtime(void) {
   // build/libtree-sitter.a <= lib/src/lib.c
@@ -58,7 +62,7 @@ static bool build_grammar_archive(void) {
   return true;
 }
 
-static bool link_app(const char *extra_cflags) {
+static bool link_app(const char *extra_cflags, int debug) {
   Nob_Cmd cmd = {0};
   nob_log(INFO, "Linking %s", APP_OUT);
 
@@ -68,8 +72,8 @@ static bool link_app(const char *extra_cflags) {
 
   nob_cmd_append(&cmd, "-std=c11", "-Wall", "-Wextra");
 
-  const bool DEVELOPMENT = true;
-  if (DEVELOPMENT) {
+  // const bool DEVELOPMENT = true;
+  if (debug) {
     nob_cmd_append(&cmd, "-fsanitize=address,undefined", "-g");
     nob_cmd_append(&cmd, "-O0");
   } else {
@@ -86,7 +90,11 @@ static bool link_app(const char *extra_cflags) {
   nob_cmd_append(&cmd, "-o", APP_OUT);
 
   // Inputs: app + static libs
-  nob_cmd_append(&cmd, APP_SRC, LIB_RT_A, LIB_GRAMMAR_A);
+  const char **app_srcs = APP_SRCS;
+  for (size_t i = 0; i < APP_SRCS_COUNT; i++) {
+    nob_cmd_append(&cmd, app_srcs[i]);
+  }
+  nob_cmd_append(&cmd, LIB_RT_A, LIB_GRAMMAR_A);
 
   return nob_cmd_run(&cmd);
 }
@@ -97,6 +105,12 @@ static bool link_app(const char *extra_cflags) {
 int main(int argc, char **argv) {
   // Rebuild self if build.c, nob.h changed
   NOB_GO_REBUILD_URSELF_PLUS(argc, argv, "nob.c");
+
+  int test = 0;
+  if (argc > 1 && strcmp(argv[1], "test") == 0) {
+    test = 1;
+    nob_log(INFO, "Running in test mode");
+  }
 
   // Simple CLI: ./nob [clean]
   if (argc > 1 && strcmp(argv[1], "clean") == 0) {
@@ -137,12 +151,12 @@ int main(int argc, char **argv) {
   }
 
   // Link app
-  if (!link_app(NULL))
+  if (!link_app(NULL, test))
     return 1;
 
   nob_log(INFO, "Built %s", APP_OUT);
 
-  if (argc > 1 && strcmp(argv[1], "test") == 0) {
+  if (test) {
     nob_log(INFO, "Running tests…");
     nob_log(INFO, "Compiling test runner");
     // compiling test runner

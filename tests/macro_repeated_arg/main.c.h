@@ -1,5 +1,4 @@
-/*// @generated - ccomptime™ v0.0.1 - 1761748275 \*/
-#pragma once
+/*// @generated - ccomptime™ v0.0.1 - 0000000000 \*/
 #define _CONCAT_(x, y) x##y
 #define CONCAT(x, y) _CONCAT_(x, y)
 #define _Comptime(x) _COMPTIME_X(__COUNTER__, x)
@@ -9,4 +8,5 @@
 
 #undef _COMPTIME_X
 #define _COMPTIME_X(n,x) CONCAT(_COMPTIME_X,n)(x)
-#define _COMPTIME_X0(x) 
+#define _COMPTIME_X0(x) 3
+#define _COMPTIME_X1(x) 3
