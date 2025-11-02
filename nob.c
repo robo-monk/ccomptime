@@ -1,4 +1,3 @@
-#define _POSIX_C_SOURCE 200809L
 #define NOB_IMPLEMENTATION
 #include "nob.h"
 
@@ -23,6 +22,7 @@ static bool build_tree_sitter_runtime(void) {
   const char *obj = BUILD_DIR "tree_sitter_runtime.o";
   nob_log(INFO, "Compiling runtime: %s", TS_RT_SRC);
   nob_cc(&cmd);
+  nob_cc_flags(&cmd);
   nob_cmd_append(&cmd, "-O3", "-c", TS_RT_SRC, "-I", TS_RT_INC, "-o", obj);
   if (!nob_cmd_run(&cmd))
     return false;
@@ -49,6 +49,7 @@ static bool build_grammar_archive(void) {
 
   nob_log(INFO, "Compiling grammar: %s", GRAMMAR_PARSER);
   nob_cc(&cmd);
+  nob_cc_flags(&cmd);
   nob_cmd_append(&cmd, "-O3", "-c", GRAMMAR_PARSER, "-I", TS_RT_INC, "-o",
                  obj_parser);
   if (!nob_cmd_run(&cmd))
@@ -70,8 +71,6 @@ static bool link_app(const char *extra_cflags, int debug) {
   // Compiler + common flags
   nob_cc(&cmd);
   nob_cc_flags(&cmd);
-
-  nob_cmd_append(&cmd, "-std=c11", "-Wall", "-Wextra");
 
   // const bool DEVELOPMENT = true;
   if (debug) {
