@@ -74,13 +74,13 @@ TestResult stdout_includes_else_fail(char *stdout, char *includes,
 
 #define COMPILE_CASE()                                                         \
   const char *test_dir = get_parent_dir(__FILE__);                             \
-  nob_log(INFO, "test dir :: %s", test_dir);                                   \
   Nob_Cmd cmd = {0};                                                           \
   nob_cmd_append(&cmd, CCOMPTIME_BIN);                                         \
   nob_cmd_append(&cmd, "clang");                                               \
   nob_cc_flags(&cmd);                                                          \
   nob_cmd_append(&cmd, r("main.c"));                                           \
   nob_cmd_append(&cmd, "-o", r("out"));                                        \
+  nob_cmd_append(&cmd, "-O0");                                                 \
   nob_cmd_append(&cmd, "-comptime-debug");                                     \
   int result = nob_cmd_run(&cmd, .stdout_path = r("comp-stdout.txt"),          \
                            .stderr_path = r("comp-stderr.txt"));               \

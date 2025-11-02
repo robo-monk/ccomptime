@@ -62,11 +62,10 @@ static void build_runner_snippets(WalkContext *ctx,
           "statement #%d\n",
           comptime_count, placeholder_index, comptime_count);
     } else {
-      nob_sb_appendf(
-          runner_main,
-          "__Comptime_Register_Main_Exec(%d); // execute comptime "
-          "statement #%d\n",
-          comptime_count, comptime_count);
+      nob_sb_appendf(runner_main,
+                     "__Comptime_Register_Main_Exec(%d); // execute comptime "
+                     "statement #%d\n",
+                     comptime_count, comptime_count);
     }
 
     comptime_count++;
@@ -87,10 +86,13 @@ static void build_compile_base_command(Nob_Cmd *out, CliArgs *parsed_argv) {
   }
 }
 
-static void build_stripped_source(WalkContext *ctx,
-                                  const char *processed_source, size_t len,
-                                  String_Builder *out) {
+static void build_comptime_safe_source(WalkContext *ctx,
+                                       const char *processed_source, size_t len,
+                                       String_Builder *out) {
   const char *cursor = processed_source;
+
+  const char *DEF = "\n#define _COMPILING\n";
+  nob_sb_append_buf(out, DEF, strlen(DEF));
 
   if (ctx->to_be_removed.count > 0) {
     qsort(ctx->to_be_removed.items, ctx->to_be_removed.count, sizeof(Slice),
@@ -121,14 +123,18 @@ static void build_stripped_source(WalkContext *ctx,
 static void build_header_prelude(WalkContext *ctx) {
   sb_appendf(&ctx->out_h, "/*// @generated - ccomptime™ v0.0.1 - %lu \\*/\n",
              time(NULL));
-  sb_appendf(
-      &ctx->out_h,
-      "#pragma once\n"
-      "#define _CONCAT_(x, y) x##y\n"
-      "#define CONCAT(x, y) _CONCAT_(x, y)\n"
-      "#define _Comptime(x) _COMPTIME_X(__COUNTER__, x)\n"
-      "#define _ComptimeType(x) _COMPTIME_X(__COUNTER__, x)\n"
-      "#define _COMPTIME_X(n, x) CONCAT(_PLACEHOLDER_COMPTIME_X, n)(x)\n");
+  sb_appendf(&ctx->out_h,
+             "#pragma once\n"
+             "#ifdef _COMPILING\n"
+             "#define _Comptime(x) /* stripped comptime */\n"
+             "#define _ComptimeType(x) /* stripped comptime type */ \n"
+             "#else\n"
+             "#define _CONCAT_(x, y) x##y\n"
+             "#define CONCAT(x, y) _CONCAT_(x, y)\n"
+             "#define _Comptime(x) _COMPTIME_X(__COUNTER__, x)\n"
+             "#define _ComptimeType(x) _COMPTIME_X(__COUNTER__, x)\n"
+             "#define _COMPTIME_X(n, x) CONCAT(_PLACEHOLDER_COMPTIME_X, n)(x)\n"
+             "#endif\n");
   sb_appendf(&ctx->out_h, "/* ---- */// the end. ///* ---- */\n");
 }
 
@@ -159,7 +165,7 @@ static void run_file(Context *ctx) {
 
   String_Builder pp_source = {0};
   MacroDefinitionHashMap macros = {0};
-  
+
   TSTree *pp_tree =
       cct_expand_macros(parser, raw_tree, &macros, ctx->raw_source->items,
                         ctx->raw_source->count, &pp_source);
@@ -177,14 +183,14 @@ static void run_file(Context *ctx) {
   String_Builder runner_main = {0};
   build_runner_snippets(&walk_ctx, &runner_definitions, &runner_main);
 
-  String_Builder stripped_input_source = {0};
-  build_stripped_source(&walk_ctx, processed_source.items,
-                        processed_source.count, &stripped_input_source);
+  String_Builder comptime_safe_source = {0};
+  build_comptime_safe_source(&walk_ctx, processed_source.items,
+                             processed_source.count, &comptime_safe_source);
 
   build_header_prelude(&walk_ctx);
 
-  nob_write_entire_file(ctx->stripped_source_path, stripped_input_source.items,
-                        stripped_input_source.count);
+  nob_write_entire_file(ctx->comptime_safe_path, comptime_safe_source.items,
+                        comptime_safe_source.count);
 
   nob_write_entire_file(ctx->runner_defs_path, runner_definitions.items,
                         runner_definitions.count);
@@ -202,7 +208,7 @@ static void run_file(Context *ctx) {
   nob_cmd_append(&build_cmd, "-o", ctx->runner_exepath);
   nob_cmd_append(
       &build_cmd,
-      temp_sprintf("-D_INPUT_PROGRAM_PATH=\"%s\"", ctx->stripped_source_path),
+      temp_sprintf("-D_INPUT_PROGRAM_PATH=\"%s\"", ctx->comptime_safe_path),
       temp_sprintf("-D_INPUT_COMPTIME_DEFS_PATH=\"%s\"", ctx->runner_defs_path),
       temp_sprintf("-D_INPUT_COMPTIME_MAIN_PATH=\"%s\"", ctx->runner_main_path),
       temp_sprintf("-D_OUTPUT_HEADERS_PATH=\"%s\"", ctx->gen_header_path));
@@ -219,7 +225,7 @@ static void run_file(Context *ctx) {
 
   sb_free(runner_definitions);
   sb_free(runner_main);
-  sb_free(stripped_input_source);
+  sb_free(comptime_safe_source);
   sb_free(walk_ctx.out_h);
 
   nob_temp_rewind(mark);
@@ -278,7 +284,7 @@ int main(int argc, char **argv) {
     da_append(&files_to_remove, ctx.preprocessed_path);
     da_append(&files_to_remove, ctx.runner_main_path);
     da_append(&files_to_remove, ctx.runner_defs_path);
-    da_append(&files_to_remove, ctx.stripped_source_path);
+    da_append(&files_to_remove, ctx.comptime_safe_path);
     da_append(&files_to_remove, ctx.runner_templ_path);
     da_append(&files_to_remove, ctx.runner_exepath);
     da_append(&files_to_remove, ctx.vals_path);

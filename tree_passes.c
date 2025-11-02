@@ -264,6 +264,7 @@ static void register_comptime_dependencies(WalkContext *const ctx,
                                            LocalWalkContext local, TSNode node,
                                            const char *src, unsigned depth) {
   TSSymbol sym = ts_node_symbol(node);
+
   switch (sym) {
   case sym_function_definition:
     local.function_definition_root = &node;
@@ -437,7 +438,7 @@ static void strip_comptime_dependencies(WalkContext *const ctx,
       nob_da_append(&ctx->to_be_removed,
                     ts_node_range(*local.type_definition_root, src));
     } else {
-      nob_log(VERBOSE, ORANGE("Stripping top level comptime block"));
+      nob_log(VERBOSE, ORANGE("?Stripping top level comptime block"));
 
       nob_da_append(&ctx->to_be_removed,
                     ts_node_range(*local.call_expression_root, src));

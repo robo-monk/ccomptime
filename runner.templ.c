@@ -116,8 +116,7 @@ __Define_Comptime_Buffer(TopLevel);
                          ._sb = &_Comptime_Buffer_Inline_##index,              \
                          .appendf = _Comptime_Buffer_appendf_Inline_##index}})
 
-#define __Comptime_Register_Main_Exec(index)                                   \
-  __Comptime_Register(index, -1)
+#define __Comptime_Register_Main_Exec(index) __Comptime_Register(index, -1)
 
 #define __Comptime_Register_Type_Exec(index, placeholder_index)                \
   __Comptime_Register(index, placeholder_index)
