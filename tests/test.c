@@ -1,7 +1,6 @@
 #include "./test.h"
 #define NOB_IMPLEMENTATION
 #include "../nob.h"
-#include <time.h>
 
 static int total_tests_run = 0;
 
