@@ -32,6 +32,7 @@ typedef struct {
   _Comptime_Buffer_Vtable Inline;
   _Comptime_Buffer_Vtable TopLevel;
   int _StatementIndex;
+  int _PlaceholderIndex;
 } _ComptimeCtx;
 #endif
 
@@ -102,10 +103,11 @@ __Define_Comptime_Buffer(TopLevel);
 // __Comptime_Statement_Fn(0, int a = 1)
 
 // this will get called for every comptime block within the main
-#define __Comptime_Register_Main_Exec(index)                                   \
+#define __Comptime_Register(index, placeholder_index)                          \
   __Comptime_wrap_exec(                                                        \
       _Comptime_exec##index,                                                   \
       (_ComptimeCtx){._StatementIndex = index,                                 \
+                     ._PlaceholderIndex = placeholder_index,                   \
                      .TopLevel =                                               \
                          (_Comptime_Buffer_Vtable){                            \
                              ._sb = &_Comptime_Buffer_TopLevel,                \
@@ -114,10 +116,21 @@ __Define_Comptime_Buffer(TopLevel);
                          ._sb = &_Comptime_Buffer_Inline_##index,              \
                          .appendf = _Comptime_Buffer_appendf_Inline_##index}})
 
+#define __Comptime_Register_Main_Exec(index)                                   \
+  __Comptime_Register(index, -1)
+
+#define __Comptime_Register_Type_Exec(index, placeholder_index)                \
+  __Comptime_Register(index, placeholder_index)
+
 void __Comptime_wrap_exec(void (*fn)(_ComptimeCtx), _ComptimeCtx ctx) {
   fn(ctx);
   fprintf(_Comptime_FP, "#define _COMPTIME_X%d(x) %.*s\n", ctx._StatementIndex,
           (int)ctx.Inline._sb->count, ctx.Inline._sb->items);
+  if (ctx._PlaceholderIndex >= 0) {
+    fprintf(_Comptime_FP, "#define _COMPTIMETYPE_%d %.*s\n",
+            ctx._PlaceholderIndex, (int)ctx.Inline._sb->count,
+            ctx.Inline._sb->items);
+  }
 }
 
 #define main _User_main // overwrite the entrypoint of the user program

@@ -44,9 +44,24 @@ MacroDefinition *macros_get(HashMap *macros, const char *key, int key_len) {
 static void expand_macro_tree(MacroDefinition *macro_def, Strings arg_values,
                               String_Builder *out_sb) {
   assert(macro_def != NULL);
+
+  nob_log(VERBOSE, "------- Expand macro tree with %zu values & %zu args ---- ",
+          arg_values.count, macro_def->arg_names.count);
+
+  for (size_t i = 0; i < macro_def->arg_names.count; i++) {
+    String_View arg_name = macro_def->arg_names.items[i];
+    String_View arg_value = arg_values.items[i];
+    nob_log(VERBOSE, "  Arg %zu: %.*s -> %.*s", i, (int)arg_name.count,
+            arg_name.data, (int)arg_value.count, arg_value.data);
+  }
+
+  for (size_t i = 0; i < arg_values.count; i++) {
+    String_View arg_value = arg_values.items[i];
+    nob_log(VERBOSE, "  Value %zu: %.*s", i, (int)arg_value.count,
+            arg_value.data);
+  }
+
   assert(macro_def->arg_names.count == arg_values.count);
-  nob_log(VERBOSE, "------- Expand macro tree with %zu args ---- ",
-          arg_values.count);
 
   debug_tree(macro_def->body_tree, macro_def->body_src, 4);
   nob_log(VERBOSE, "^^^^^^^ Expand macro tree with %zu args ^^^^^^^",

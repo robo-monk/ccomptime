@@ -232,7 +232,7 @@ int cli(int argc, char **argv, CliArgs *parsed_argv) {
   if (parsed_argv->cct_flags & CliComptimeFlag_NoLogs) {
     nob_minimal_log_level = NO_LOGS;
   } else if (parsed_argv->cct_flags & CliComptimeFlag_Debug) {
-    nob_minimal_log_level = INFO;
+    nob_minimal_log_level = NOB_VERBOSE;
   }
 
   return 0;

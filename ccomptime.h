@@ -16,5 +16,6 @@ typedef struct {
   _Comptime_Buffer_Vtable Inline;
   _Comptime_Buffer_Vtable TopLevel;
   int _StatementIndex;
+  int _PlaceholderIndex;
 } _ComptimeCtx;
 #endif

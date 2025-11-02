@@ -26,6 +26,7 @@ void hashmap_put(HashMap *map, char *key, void *val);
 void hashmap_put2(HashMap *map, char *key, int keylen, void *val);
 void hashmap_delete(HashMap *map, char *key);
 void hashmap_delete2(HashMap *map, char *key, int keylen);
+uint64_t hashmap_fnv_hash(char *s, int len);
 #endif
 
 #ifdef HASHMAP_IMPLEMENTATION
@@ -43,7 +44,7 @@ void hashmap_delete2(HashMap *map, char *key, int keylen);
 // Represents a deleted hash entry
 #define TOMBSTONE ((void *)-1)
 
-static uint64_t fnv_hash(char *s, int len) {
+uint64_t hashmap_fnv_hash(char *s, int len) {
   uint64_t hash = 0xcbf29ce484222325;
   for (int i = 0; i < len; i++) {
     hash *= 0x100000001b3;
@@ -90,7 +91,7 @@ static HashEntry *get_entry(HashMap *map, char *key, int keylen) {
   if (!map->buckets)
     return NULL;
 
-  uint64_t hash = fnv_hash(key, keylen);
+  uint64_t hash = hashmap_fnv_hash(key, keylen);
 
   for (int i = 0; i < map->capacity; i++) {
     HashEntry *ent = &map->buckets[(hash + i) % map->capacity];
@@ -110,7 +111,7 @@ static HashEntry *get_or_insert_entry(HashMap *map, char *key, int keylen) {
     rehash(map);
   }
 
-  uint64_t hash = fnv_hash(key, keylen);
+  uint64_t hash = hashmap_fnv_hash(key, keylen);
 
   for (int i = 0; i < map->capacity; i++) {
     HashEntry *ent = &map->buckets[(hash + i) % map->capacity];

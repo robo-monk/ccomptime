@@ -22,6 +22,7 @@ typedef struct {
   }
 
 static int total_tests_failed = 0;
+static int total_tests_succeeded = 0;
 
 const char *get_parent_dir(const char *filepath) {
   static char buffer[1024];
@@ -55,6 +56,7 @@ const char *resolve(const char *FILE_NAME, const char *path) {
 
 void log_test_result(TestResult tr) {
   if (tr.success) {
+    total_tests_succeeded++;
     printf(GREEN("[PASS]") " %s\n", tr.message);
   } else {
     total_tests_failed++;
@@ -79,6 +81,7 @@ TestResult stdout_includes_else_fail(char *stdout, char *includes,
   nob_cc_flags(&cmd);                                                          \
   nob_cmd_append(&cmd, r("main.c"));                                           \
   nob_cmd_append(&cmd, "-o", r("out"));                                        \
+  nob_cmd_append(&cmd, "-comptime-debug");                                     \
   int result = nob_cmd_run(&cmd, .stdout_path = r("comp-stdout.txt"),          \
                            .stderr_path = r("comp-stderr.txt"));               \
   Nob_String_Builder comp_stdout = {0};                                        \

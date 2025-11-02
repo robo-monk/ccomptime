@@ -19,19 +19,55 @@
 
 extern const TSLanguage *tree_sitter_c(void);
 
+static int comptimetype_placeholder_for_stmt(const WalkContext *ctx,
+                                             size_t stmt_index) {
+  for (size_t i = 0; i < ctx->comptimetype_stmt_indices.count; i++) {
+    if (ctx->comptimetype_stmt_indices.items[i] == (int)stmt_index) {
+      return (int)i;
+    }
+  }
+  return -1;
+}
+
+static int compare_slice_start(const void *lhs, const void *rhs) {
+  const Slice *a = lhs;
+  const Slice *b = rhs;
+  if (a->start < b->start)
+    return -1;
+  if (a->start > b->start)
+    return 1;
+  if (a->len < b->len)
+    return -1;
+  if (a->len > b->len)
+    return 1;
+  return 0;
+}
+
 static void build_runner_snippets(WalkContext *ctx,
                                   String_Builder *runner_definitions,
                                   String_Builder *runner_main) {
   int comptime_count = 0;
 
-  nob_da_foreach(Slice, it, &ctx->comptime_stmts) {
-    nob_sb_appendf(runner_definitions, "\n__Comptime_Statement_Fn(%d, %.*s)\n",
-                   comptime_count, it->len, it->start);
+  for (size_t i = 0; i < ctx->comptime_stmts.count; i++) {
+    Slice stmt = ctx->comptime_stmts.items[i];
+    int placeholder_index = comptimetype_placeholder_for_stmt(ctx, i);
 
-    nob_sb_appendf(runner_main,
-                   "__Comptime_Register_Main_Exec(%d); // "
-                   "execute comptime statement #%d\n",
-                   comptime_count, comptime_count);
+    nob_sb_appendf(runner_definitions, "\n__Comptime_Statement_Fn(%d, %.*s)\n",
+                   comptime_count, stmt.len, stmt.start);
+
+    if (placeholder_index >= 0) {
+      nob_sb_appendf(
+          runner_main,
+          "__Comptime_Register_Type_Exec(%d, %d); // execute comptime "
+          "statement #%d\n",
+          comptime_count, placeholder_index, comptime_count);
+    } else {
+      nob_sb_appendf(
+          runner_main,
+          "__Comptime_Register_Main_Exec(%d); // execute comptime "
+          "statement #%d\n",
+          comptime_count, comptime_count);
+    }
 
     comptime_count++;
   }
@@ -56,20 +92,25 @@ static void build_stripped_source(WalkContext *ctx,
                                   String_Builder *out) {
   const char *cursor = processed_source;
 
-  nob_da_foreach(Slice, it, &ctx->to_be_removed) {
-    if (cursor >= it->start)
-      continue;
+  if (ctx->to_be_removed.count > 0) {
+    qsort(ctx->to_be_removed.items, ctx->to_be_removed.count, sizeof(Slice),
+          compare_slice_start);
 
-    assert(cursor < it->start && "cursor is ahead of comptime slice");
+    nob_da_foreach(Slice, it, &ctx->to_be_removed) {
+      if (cursor > it->start)
+        continue;
 
-    ssize_t offset = it->start - cursor;
-    assert(offset >= 0);
+      assert(cursor < it->start && "cursor is ahead of comptime slice");
 
-    if (offset > 0) {
-      nob_sb_append_buf(out, cursor, (size_t)offset);
+      ssize_t offset = it->start - cursor;
+      assert(offset >= 0);
+
+      if (offset > 0) {
+        nob_sb_append_buf(out, cursor, (size_t)offset);
+      }
+
+      cursor = it->start + it->len;
     }
-
-    cursor = it->start + it->len;
   }
 
   ssize_t tail = processed_source + len - cursor;
@@ -118,6 +159,7 @@ static void run_file(Context *ctx) {
 
   String_Builder pp_source = {0};
   MacroDefinitionHashMap macros = {0};
+  
   TSTree *pp_tree =
       cct_expand_macros(parser, raw_tree, &macros, ctx->raw_source->items,
                         ctx->raw_source->count, &pp_source);

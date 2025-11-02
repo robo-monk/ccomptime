@@ -32,21 +32,22 @@ int main(int argc, char **argv) {
       "tests/macro_repeated_arg/test.c", "tests/include_header_macro/test.c"
       //
   );
-// #include "./comptime_type/test.c"
-// #include "./macro_repeated_arg/test.c"
+
 #include "./auto_header_injection/test.c"
 #include "./comptime_type/test.c"
+#include "./polymorphic_result_type/test.c"
 #include "./simple_comptype/test.c"
 #include "./simple_inline_comptime/test.c"
-#include "./top_level_comptime_block/test.c"
+  // #include "./macro_repeated_arg/test.c"
+  // #include "./top_level_comptime_block/test.c"
 
   int passed = total_tests_run - total_tests_failed;
   double elapsed_ms = ms_since(t0);
 
   printf("\n\n================================ TEST SUMMARY "
          "================================\n");
-  printf("Total    : %d\n", total_tests_run);
-  printf(GREEN("Passed   : %d\n"), passed);
+  printf("Total    : %d\n", total_tests_failed + total_tests_succeeded);
+  printf(GREEN("Passed   : %d\n"), total_tests_succeeded);
   if (total_tests_failed) {
     printf(RED("Failed   : %d\n"), total_tests_failed);
   } else {

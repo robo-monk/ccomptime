@@ -3,7 +3,9 @@
 #include "../../ccomptime.h"
 #include "main.c.h"
 
+_Comptime({ printf("This gets executed during comptime!"); });
+
 int main(void) {
-  _Comptime({ printf("This gets executed during comptime!"); });
+  // _Comptime({ printf("This gets executed during comptime!"); });
   return 1;
 }

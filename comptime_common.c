@@ -86,27 +86,27 @@ void debug_tree_node(TSNode node, const char *src, int depth) {
     return;
 
   for (unsigned i = 0; i < (unsigned)depth; i++)
-    putchar('.');
+    fprintf(stderr, ".");
 
   if (ts_node_has_error(node)) {
-    printf(RED("[%s] (%d)"), ts_node_type(node), ts_node_symbol(node));
+    fprintf(stderr, RED("[%s] (%d)"), ts_node_type(node), ts_node_symbol(node));
   } else if (ts_node_symbol(node) == sym_identifier &&
              ts_node_is_comptime_kw(node, src)) {
-    printf(MAGENTA(" [%s] (%d) [_Comptime]"), ts_node_type(node),
-           ts_node_symbol(node));
+    fprintf(stderr, MAGENTA(" [%s] (%d) [_Comptime]"), ts_node_type(node),
+            ts_node_symbol(node));
   } else if (ts_node_symbol(node) == sym_identifier &&
              ts_node_is_comptimetype_kw(node, src)) {
-    printf(ORANGE(" [%s] (%d) [_ComptimeType]"), ts_node_type(node),
-           ts_node_symbol(node));
+    fprintf(stderr, ORANGE(" [%s] (%d) [_ComptimeType]"), ts_node_type(node),
+            ts_node_symbol(node));
   } else {
-    printf(BOLD("%s") " " GRAY("[%d]"), ts_node_type(node),
-           ts_node_symbol(node));
+    fprintf(stderr, BOLD("%s") " " GRAY("[%d]"), ts_node_type(node),
+            ts_node_symbol(node));
   }
 
   Slice range = ts_node_range(node, src);
-  printf(GRAY(" %.*s"), min_int(range.len, 35), range.start);
+  fprintf(stderr, GRAY(" %.*s"), min_int(range.len, 35), range.start);
 
-  printf(GRAY(" [%p]\n"), node.id);
+  fprintf(stderr, GRAY(" [%p]\n"), node.id);
 
   uint32_t n = ts_node_child_count(node);
   for (uint32_t i = 0; i < n; i++) {
@@ -122,8 +122,9 @@ void debug_tree(TSTree *tree, const char *src, int depth) {
 }
 
 bool ts_node_is_comptimetype_kw(TSNode node, const char *src) {
-  assert(ts_node_symbol(node) == sym_identifier);
-  return strlen("_ComptimeType") == (size_t)ts_node_range(node, src).len &&
+  return (ts_node_symbol(node) == sym_identifier ||
+          ts_node_symbol(node) == alias_sym_type_identifier) &&
+         strlen("_ComptimeType") == (size_t)ts_node_range(node, src).len &&
          memcmp(ts_node_range(node, src).start, "_ComptimeType",
                 ts_node_range(node, src).len) == 0;
 }

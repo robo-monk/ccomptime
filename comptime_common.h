@@ -52,6 +52,11 @@ typedef struct {
   } comptimetype_stmts;
 
   struct {
+    int *items;
+    size_t count, capacity;
+  } comptimetype_stmt_indices;
+
+  struct {
     Slice *items;
     size_t count, capacity;
   } comptime_stmts;
