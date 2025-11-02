@@ -1,24 +1,25 @@
-name: Nob Tests
-
-on:
-  push:
-    branches:
-      - main
-      - master
-  pull_request:
-    branches:
-      - main
-      - master
+name: run tests
+on: [push, pull_request]
 
 jobs:
-  nob-test:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - name: Clone GIT repo
+        uses: actions/checkout@v4
+      - name: Run tests
+        run: |
+          clang -o nob nob.c
+          ./nob test
+  ubuntu:
+    strategy:
+      matrix:
+        cc: [gcc, clang]
     runs-on: ubuntu-latest
     steps:
-      - name: Check out repository
+      - name: Clone GIT repo
         uses: actions/checkout@v4
-
-      - name: Build nob
-        run: clang nob.c -o nob
-
-      - name: Run tests
-        run: ./nob test
+      - name: Build tests
+        run: |
+          ${{ matrix.cc }} -o nob nob.c
+          ./nob test
