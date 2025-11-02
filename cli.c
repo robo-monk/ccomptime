@@ -17,6 +17,7 @@ static bool has_prefix(const char *s, const char *pre) {
 }
 
 void print_usage(int argc, char **argv) {
+  (void)argc;
 
   printf(BOLD("-- ccomptime™ v0.0.1 --") "\nUSAGE"
                                          ": %s [clang-like "

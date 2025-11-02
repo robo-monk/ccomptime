@@ -93,14 +93,12 @@ TestResult stdout_includes_else_fail(char *stdout, char *includes,
   if (!result) {                                                               \
     fprintf(stderr, RED("\n\n%s\n\n"), comp_stderr.items);                     \
     log_test_result((TestResult){.success = false,                             \
-                                 .message = test_dir,                          \
+                                 .message = (char *)test_dir,                  \
                                  .error = "failed to compile test"});          \
     break;                                                                     \
-  };                                                                           \
-  int COMPILED = 1;
+  };
 
 #define EXEC_CASE()                                                            \
-  assert(COMPILED && "must compile first use COMPILE_CASE");                   \
   nob_cmd_append(&cmd, r("out"));                                              \
   int exec_result = nob_cmd_run(&cmd, .stdout_path = r("exec-stdout.txt"),     \
                                 .stderr_path = r("exec-stderr.txt"));          \
@@ -114,7 +112,7 @@ TestResult stdout_includes_else_fail(char *stdout, char *includes,
     fprintf(stdout, GRAY("\n\n%s"), exec_stdout.items);                        \
     fprintf(stderr, RED("\n\n%s\n\n"), exec_stderr.items);                     \
     log_test_result((TestResult){.success = false,                             \
-                                 .message = test_dir,                          \
+                                 .message = (char *)test_dir,                  \
                                  .error = "failed to exec test"});             \
     break;                                                                     \
   };

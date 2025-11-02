@@ -42,7 +42,6 @@ int main(int argc, char **argv) {
 #include "./simple_inline_comptime/test.c"
 #include "./top_level_comptime_block/test.c"
 
-  int passed = total_tests_run - total_tests_failed;
   double elapsed_ms = ms_since(t0);
 
   printf("\n\n================================ TEST SUMMARY "

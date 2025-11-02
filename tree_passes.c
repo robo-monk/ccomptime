@@ -416,8 +416,6 @@ static void strip_comptime_dependencies(WalkContext *const ctx,
     nob_log(VERBOSE, MAGENTA("Within a comptime dependency :: !"));
 
     if (local.function_definition_root) {
-      Slice r = ts_node_range(*local.function_definition_root, src);
-
       nob_log(VERBOSE,
               ORANGE("Stripping comptime dependent function (%d) '%.*s'"),
               ts_node_range(*local.function_definition_root, src).len,
