@@ -54,4 +54,9 @@ int main(int argc, char **argv) {
     printf("Failed   : 0\n");
   }
   printf("Duration : %.2f ms\n\n", elapsed_ms);
+
+  if (total_tests_failed) {
+    return 1;
+  }
+  return 0;
 }
