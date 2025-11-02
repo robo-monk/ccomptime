@@ -36,10 +36,10 @@ int main(int argc, char **argv) {
 
 #include "./auto_header_injection/test.c"
 #include "./comptime_type/test.c"
+#include "./macro_repeated_arg/test.c"
 #include "./polymorphic_result_type/test.c"
 #include "./simple_comptype/test.c"
 #include "./simple_inline_comptime/test.c"
-  // #include "./macro_repeated_arg/test.c"
   // #include "./top_level_comptime_block/test.c"
 
   int passed = total_tests_run - total_tests_failed;

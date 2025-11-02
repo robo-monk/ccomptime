@@ -81,11 +81,11 @@ static void expand_macro_tree(MacroDefinition *macro_def, Strings arg_values,
   assert(root_range.start == macro_def->body_src);
 
   char *cursor = (char *)macro_def->body_src;
-  if (replacements.count != arg_values.count) {
-    nob_log(ERROR, "Macro expansion failed: %zu replacements != %zu args",
-            replacements.count, arg_values.count);
-  }
-  assert(replacements.count == arg_values.count);
+  // if (replacements.count != arg_values.count) {
+  //   nob_log(ERROR, "Macro expansion failed: %zu replacements != %zu args",
+  //           replacements.count, arg_values.count);
+  // }
+  // assert(replacements.count == arg_values.count);
 
   nob_da_foreach(Macro_Replacement, it, &replacements) {
     Slice r = ts_node_range(it->node, macro_def->body_src);

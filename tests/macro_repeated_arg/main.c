@@ -8,7 +8,7 @@
   int name##_second = _Comptime(snippet);
 
 int main(void) {
-  MAKE_PAIR(val, _ComptimeCtx.Inline.appendf("3"));
+  MAKE_PAIR(val, _ComptimeCtx.Inline.appendf("%d", 3));
   printf("SUM=%d\n", val_first + val_second);
-  return (val_first + val_second) == 6 ? 0 : 1;
+  return (val_first + val_second) == 3 + 3 ? 0 : 1;
 }
