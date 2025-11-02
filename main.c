@@ -204,7 +204,8 @@ static void run_file(Context *ctx) {
   Nob_Cmd build_cmd = {0};
   build_compile_base_command(&build_cmd, ctx->parsed_argv);
 
-  nob_cmd_append(&build_cmd, resolve(__FILE__, "runner.templ.c"));
+  nob_cmd_append(&build_cmd, nob_temp_sprintf("%s/runner.templ.c",
+                                              nob_get_current_dir_temp()));
   nob_cmd_append(&build_cmd, "-o", ctx->runner_exepath);
   nob_cmd_append(
       &build_cmd,
