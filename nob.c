@@ -107,20 +107,26 @@ int main(int argc, char **argv) {
   NOB_GO_REBUILD_URSELF_PLUS(argc, argv, "nob.c");
 
   int test = 0;
-  if (argc > 1 && strcmp(argv[1], "test") == 0) {
-    test = 1;
-    nob_log(INFO, "Running in test mode");
-  }
+  int debug = 0;
 
-  // Simple CLI: ./nob [clean]
-  if (argc > 1 && strcmp(argv[1], "clean") == 0) {
-    nob_log(INFO, "Cleaning %s", BUILD_DIR);
-    // nob_remove_dir_recursive(BUILD_DIR);
-    Cmd cmd = {0};
-    nob_cmd_append(&cmd, "rm", "-rf", BUILD_DIR);
-    if (!nob_cmd_run(&cmd))
-      return 1;
-    return 0;
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[1], "test") == 0) {
+      test = 1;
+    }
+
+    if (strcmp(argv[1], "debug") == 0) {
+      debug = 1;
+    }
+
+    if (strcmp(argv[1], "clean") == 0) {
+      nob_log(INFO, "Cleaning %s", BUILD_DIR);
+      // nob_remove_dir_recursive(BUILD_DIR);
+      Cmd cmd = {0};
+      nob_cmd_append(&cmd, "rm", "-rf", BUILD_DIR);
+      if (!nob_cmd_run(&cmd))
+        return 1;
+      return 0;
+    }
   }
 
   if (!nob_mkdir_if_not_exists(BUILD_DIR))
@@ -151,7 +157,7 @@ int main(int argc, char **argv) {
   }
 
   // Link app
-  if (!link_app(NULL, test))
+  if (!link_app(NULL, debug))
     return 1;
 
   nob_log(INFO, "Built %s", APP_OUT);
