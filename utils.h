@@ -1,3 +1,7 @@
+#pragma once
+#ifndef _UTILS_H
+#define _UTILS_H
+
 #include "nob.h"
 #include <stdlib.h>
 
@@ -26,3 +30,5 @@ static inline Strings strings_new(size_t capacity) {
       .items = (Nob_String_View *)malloc(sizeof(Nob_String_View) * capacity)};
   return strings;
 }
+
+#endif

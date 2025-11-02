@@ -160,6 +160,10 @@ int main(int argc, char **argv) {
   if (!link_app(NULL, debug))
     return 1;
 
+  // Copy assets inside the build folder to make the relative paths work
+  nob_log(INFO, "Copying assets..");
+  nob_copy_file("runner.templ.c", BUILD_DIR "runner.templ.c");
+
   nob_log(INFO, "Built %s", APP_OUT);
 
   if (test) {

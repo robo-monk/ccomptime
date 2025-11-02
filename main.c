@@ -204,8 +204,11 @@ static void run_file(Context *ctx) {
   Nob_Cmd build_cmd = {0};
   build_compile_base_command(&build_cmd, ctx->parsed_argv);
 
-  nob_cmd_append(&build_cmd, nob_temp_sprintf("%s/runner.templ.c",
-                                              nob_get_current_dir_temp()));
+  nob_cmd_append(
+      &build_cmd,
+      nob_temp_sprintf("%s/runner.templ.c",
+                       nob_temp_dir_name(nob_temp_running_executable_path())));
+
   nob_cmd_append(&build_cmd, "-o", ctx->runner_exepath);
   nob_cmd_append(
       &build_cmd,
@@ -250,18 +253,25 @@ int main(int argc, char **argv) {
     nob_log(INFO, "Processing input file %s", argv[*index]);
 
     const char *input_filename = argv[*index];
+
+    String_Builder absolute_input_filename = {0};
+    sb_appendf(&absolute_input_filename, "%s/%s", nob_get_current_dir_temp(),
+               input_filename);
+    nob_sb_append_null(&absolute_input_filename);
+
     String_Builder raw_source = {0};
     String_Builder preprocessed_source = {0};
     Context ctx = {0};
-    ctx.input_path = input_filename;
+    ctx.input_path = absolute_input_filename.items;
     ctx.parsed_argv = &parsed_argv;
     ctx.raw_source = &raw_source;
     ctx.preprocessed_source = &preprocessed_source;
 
-    Context_fill_paths(&ctx, input_filename);
+    Context_fill_paths(&ctx, absolute_input_filename.items);
 
-    nob_log(VERBOSE, "Processing %s source as SourceCode", input_filename);
-    nob_read_entire_file(input_filename, ctx.raw_source);
+    nob_log(VERBOSE, "Processing %s source as SourceCode [%s]",
+            absolute_input_filename.items, nob_get_current_dir_temp());
+    nob_read_entire_file(absolute_input_filename.items, ctx.raw_source);
 
     run_file(&ctx);
 
@@ -271,7 +281,8 @@ int main(int argc, char **argv) {
     Nob_Cmd cmd = {0};
     nob_log(INFO, "Running runner %s", ctx.runner_exepath);
     printf("=== Compile time logs ===\n");
-    nob_cmd_append(&cmd, nob_temp_sprintf("./%s", ctx.runner_exepath));
+    // nob_cmd_append(&cmd, nob_temp_sprintf("./%s", ctx.runner_exepath));
+    nob_cmd_append(&cmd, nob_temp_sprintf("%s", ctx.runner_exepath));
     if (!nob_cmd_run(&cmd)) {
       nob_log(ERROR, "failed to run runner %s", ctx.runner_templ_path);
       exit(1);
