@@ -6,6 +6,6 @@
 _Comptime({ printf("This gets executed during comptime!"); });
 
 int main(void) {
-  // _Comptime({ printf("This gets executed during comptime!"); });
-  return 1;
+  _Comptime({ printf("This gets executed during comptime!"); });
+  return 0;
 }

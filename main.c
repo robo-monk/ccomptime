@@ -280,26 +280,23 @@ int main(int argc, char **argv) {
 
     Nob_Cmd cmd = {0};
     nob_log(INFO, "Running runner %s", ctx.runner_exepath);
-    printf("=== Compile time logs ===\n");
+    // printf("=== Compile time logs ===\n");
     // nob_cmd_append(&cmd, nob_temp_sprintf("./%s", ctx.runner_exepath));
     nob_cmd_append(&cmd, nob_temp_sprintf("%s", ctx.runner_exepath));
     if (!nob_cmd_run(&cmd)) {
-      nob_log(ERROR, "failed to run runner %s", ctx.runner_templ_path);
+      nob_log(ERROR, "failed to run runner %s", ctx.runner_exepath);
       exit(1);
     }
     fflush(stdout);
-    printf("=== end === \n");
+    // printf("=== end === \n");
 
     write_final_wrapper(&ctx);
     parsed_argv.argv[*index] = (char *)ctx.final_out_path;
 
-    da_append(&files_to_remove, ctx.preprocessed_path);
     da_append(&files_to_remove, ctx.runner_main_path);
     da_append(&files_to_remove, ctx.runner_defs_path);
     da_append(&files_to_remove, ctx.comptime_safe_path);
-    da_append(&files_to_remove, ctx.runner_templ_path);
     da_append(&files_to_remove, ctx.runner_exepath);
-    da_append(&files_to_remove, ctx.vals_path);
     da_append(&files_to_remove, ctx.final_out_path);
   }
 
