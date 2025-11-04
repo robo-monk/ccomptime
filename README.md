@@ -27,13 +27,6 @@ cc nob.c -o nob
 ./nob test
 ```
 
-## TODOs
-[ ] Auto-detect the generated header and add it to the original file if not present (so it compiles)
-[ ] Do not generate a header in the case that the input does not contain any comptime blocks
-[ ] Currently the runner.templ.c is not getting properly linked unless we are compiling something from the root of the project (I want to embed it in the executable)
-[ ] Investigate if we can `ComptimeCtx.InferredType`
-[x] Add tests
-[ ] Add proper examples
 
 
 ### Using as compiler
