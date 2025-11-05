@@ -23,6 +23,12 @@ static const char *test_files[] = {
 
     "tests/top_level_comptime_block", "tests/comptime_type",
     "tests/macro_repeated_arg",
+
+    // New comprehensive test cases
+    "tests/string_generation",        "tests/comptime_file_io",
+    "tests/conditional_codegen",      "tests/array_generation",
+    "tests/loop_codegen",             "tests/comptime_with_stdlib",
+    "tests/nested_struct_generation",
 };
 
 static const size_t test_files_len = sizeof(test_files) / sizeof(test_files[0]);
