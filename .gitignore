@@ -7,3 +7,4 @@ tests/**/out
 *.dSYM
 test
 tests/**/*.c.h
+.DS_Store
