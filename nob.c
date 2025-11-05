@@ -23,7 +23,7 @@ static bool build_tree_sitter_runtime(void) {
   nob_log(INFO, "Compiling runtime: %s", TS_RT_SRC);
   nob_cc(&cmd);
   nob_cc_flags(&cmd);
-  nob_cmd_append(&cmd, "-O3", "-c", TS_RT_SRC, "-I", TS_RT_INC, "-o", obj);
+  nob_cmd_append(&cmd, "-O3", "-c", TS_RT_SRC, "-I", TS_RT_INC, "-I", "deps/tree_sitter/src", "-o", obj);
   if (!nob_cmd_run(&cmd))
     return false;
 
@@ -50,7 +50,7 @@ static bool build_grammar_archive(void) {
   nob_log(INFO, "Compiling grammar: %s", GRAMMAR_PARSER);
   nob_cc(&cmd);
   nob_cc_flags(&cmd);
-  nob_cmd_append(&cmd, "-O3", "-c", GRAMMAR_PARSER, "-I", TS_RT_INC, "-o",
+  nob_cmd_append(&cmd, "-O3", "-c", GRAMMAR_PARSER, "-I", TS_RT_INC, "-I", "deps/tree_sitter/src", "-o",
                  obj_parser);
   if (!nob_cmd_run(&cmd))
     return false;
