@@ -96,9 +96,9 @@ int _Comptime__sb_appendf(_Comptime__String_Builder *sb, const char *fmt, ...) {
 
 __Define_Comptime_Buffer(TopLevel);
 
-#define __Comptime_Statement_Fn(index, code)                                   \
+#define __Comptime_Statement_Fn(index, ...)                                    \
   __Define_Comptime_Buffer(Inline_##index);                                    \
-  void _Comptime_exec##index(_ComptimeCtx _ComptimeCtx) { code; }
+  void _Comptime_exec##index(_ComptimeCtx _ComptimeCtx) { __VA_ARGS__; }
 
 // __Comptime_Statement_Fn(0, int a = 1)
 
@@ -123,8 +123,9 @@ __Define_Comptime_Buffer(TopLevel);
 
 void __Comptime_wrap_exec(void (*fn)(_ComptimeCtx), _ComptimeCtx ctx) {
   fn(ctx);
-  fprintf(_Comptime_FP, "#define _COMPTIME_X%d(x) %.*s\n", ctx._StatementIndex,
-          (int)ctx.Inline._sb->count, ctx.Inline._sb->items);
+  fprintf(_Comptime_FP, "#define _COMPTIME_X%d(...) %.*s\n",
+          ctx._StatementIndex, (int)ctx.Inline._sb->count,
+          ctx.Inline._sb->items);
   if (ctx._PlaceholderIndex >= 0) {
     fprintf(_Comptime_FP, "#define _COMPTIMETYPE_%d %.*s\n",
             ctx._PlaceholderIndex, (int)ctx.Inline._sb->count,
@@ -148,8 +149,8 @@ int main(void) {
     exit(EXIT_FAILURE);
   }
 
-  fprintf(_Comptime_FP, "\n#undef _COMPTIME_X\n#define _COMPTIME_X(n,x) "
-                        "CONCAT(_COMPTIME_X,n)(x)\n");
+  fprintf(_Comptime_FP, "\n#undef _COMPTIME_X\n#define _COMPTIME_X(n,...) "
+                        "CONCAT(_COMPTIME_X,n)(__VA_ARGS__)\n");
 
 #include _INPUT_COMPTIME_MAIN_PATH
 

@@ -123,18 +123,20 @@ static void build_comptime_safe_source(WalkContext *ctx,
 static void build_header_prelude(WalkContext *ctx) {
   sb_appendf(&ctx->out_h, "/*// @generated - ccomptime™ v0.0.1 - %lu \\*/\n",
              time(NULL));
-  sb_appendf(&ctx->out_h,
-             "#pragma once\n"
-             "#ifdef _COMPILING\n"
-             "#define _Comptime(x) /* stripped comptime */\n"
-             "#define _ComptimeType(x) /* stripped comptime type */ \n"
-             "#else\n"
-             "#define _CONCAT_(x, y) x##y\n"
-             "#define CONCAT(x, y) _CONCAT_(x, y)\n"
-             "#define _Comptime(x) _COMPTIME_X(__COUNTER__, x)\n"
-             "#define _ComptimeType(x) _COMPTIME_X(__COUNTER__, x)\n"
-             "#define _COMPTIME_X(n, x) CONCAT(_PLACEHOLDER_COMPTIME_X, n)(x)\n"
-             "#endif\n");
+  sb_appendf(
+      &ctx->out_h,
+      "#pragma once\n"
+      "#ifdef _COMPILING\n"
+      "#define _Comptime(...) /* stripped comptime */\n"
+      "#define _ComptimeType(x) /* stripped comptime type */ \n"
+      "#else\n"
+      "#define _CONCAT_(x, y) x##y\n"
+      "#define CONCAT(x, y) _CONCAT_(x, y)\n"
+      "#define _Comptime(...) _COMPTIME_X(__COUNTER__, __VA_ARGS__)\n"
+      "#define _ComptimeType(...) _COMPTIME_X(__COUNTER__, __VA_ARGS__)\n"
+      "#define _COMPTIME_X(n, ...) CONCAT(_PLACEHOLDER_COMPTIME_X, "
+      "n)(__VA_ARGS__)\n"
+      "#endif\n");
   sb_appendf(&ctx->out_h, "/* ---- */// the end. ///* ---- */\n");
 }
 

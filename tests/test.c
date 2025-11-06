@@ -1,5 +1,6 @@
-
 #include "./test.h"
+#define HASHMAP_IMPLEMENTATION
+#include "../deps/hashmap/hashmap.h"
 
 static int total_tests_run = 0;
 
@@ -29,6 +30,8 @@ static inline double ms_since(struct timespec start) {
 
 // static const size_t test_files_len = sizeof(test_files) /
 // sizeof(test_files[0]);
+void run_and_save_pid(Nob_Cmd *cmd, HashMap *pids) {}
+
 int main(int argc, char **argv) {
   struct timespec t0;
   clock_gettime(CLOCK_MONOTONIC, &t0);
@@ -38,7 +41,9 @@ int main(int argc, char **argv) {
   Nob_File_Paths tests = {0};
   nob_read_entire_dir("tests", &tests);
 
-  for (ssize_t i = tests.count-1; i >= 0; i--) {
+  // HashMap pid_processes = {0};
+
+  for (ssize_t i = tests.count - 1; i >= 0; i--) {
     if (strcmp(tests.items[i], ".") == 0 || strcmp(tests.items[i], "..") == 0 ||
         strcmp(tests.items[i], "test.h") == 0 ||
         strcmp(tests.items[i], "test.c") == 0) {
@@ -58,6 +63,17 @@ int main(int argc, char **argv) {
   Nob_Procs procs = {0};
   nob_log(INFO, "Compiling tests...");
 
+  Nob_String_Builder cmd_temp = {0};
+#define STORE_CMD(cmd)                                                         \
+  nob_cmd_render(cmd, &cmd_temp);                                              \
+  nob_sb_append_null(&cmd_temp);
+#define PUT_PID()                                                              \
+  hashmap_put(&pid_processes,                                                  \
+              strdup(nob_temp_sprintf("%d", procs.items[procs.count - 1])),    \
+              strdup(cmd_temp.items));
+
+#define GET_PID(pid) hashmap_get(&pid_processes, nob_temp_sprintf("%d", pid))
+
   // first pass: compile the tests
   nob_da_foreach(const char *, test_file, &tests) {
 
@@ -73,11 +89,13 @@ int main(int argc, char **argv) {
     nob_cmd_append(&compile_cmd, "-o",
                    nob_temp_sprintf("tests/%s/%s", *test_file, "out"));
 
+    // STORE_CMD(compile_cmd);
     nob_cmd_run(&compile_cmd, .async = &procs,
                 .stdout_path = nob_temp_sprintf("tests/%s/%s", *test_file,
                                                 "comp-stdout.txt"),
                 .stderr_path = nob_temp_sprintf("tests/%s/%s", *test_file,
                                                 "comp-stderr.txt"));
+    // PUT_PID();
 
     const char *assertion_path =
         nob_temp_sprintf("tests/%s/%s", *test_file, "assertion.c");
@@ -95,7 +113,10 @@ int main(int argc, char **argv) {
     nob_cmd_append(&assert_compile_cmd, assertion_path);
     nob_cmd_append(&assert_compile_cmd, "-o",
                    nob_temp_sprintf("tests/%s/%s", *test_file, "assertion"));
+
+    // STORE_CMD(assert_compile_cmd);
     nob_cmd_run(&assert_compile_cmd, .async = &procs);
+    // PUT_PID();
 
     nob_temp_rewind(mark);
   }
@@ -107,6 +128,7 @@ int main(int argc, char **argv) {
 
   nob_da_foreach(Nob_Proc, it, &procs) {
     if (!nob_proc_wait(*it)) {
+      // nob_log(ERROR, RED("proc %d failed (%s)"), *it, (char *)GET_PID(*it));
       TestResult t = (TestResult){.error = "failed to compile", .success = 0};
       nob_da_append(&assertions, t);
     }
@@ -122,17 +144,21 @@ int main(int argc, char **argv) {
     Nob_Cmd exe_cmd = {0};
     nob_cmd_append(&exe_cmd,
                    nob_temp_sprintf("tests/%s/%s", *test_file, "out"));
+
+    // STORE_CMD(exe_cmd);
     nob_cmd_run(&exe_cmd, .async = &procs,
                 .stdout_path = nob_temp_sprintf("tests/%s/%s", *test_file,
                                                 "exec-stdout.txt"),
                 .stderr_path = nob_temp_sprintf("tests/%s/%s", *test_file,
                                                 "exec-stderr.txt"));
 
+    // PUT_PID();
     nob_temp_rewind(mark);
   }
 
   nob_da_foreach(Nob_Proc, it, &procs) {
     if (!nob_proc_wait(*it)) {
+      // nob_log(ERROR, RED("proc %d failed (%s)"), *it, (char *)GET_PID(*it));
       TestResult t = (TestResult){.error = "failed to run test", .success = 0};
       nob_da_append(&assertions, t);
     }
@@ -149,17 +175,15 @@ int main(int argc, char **argv) {
     nob_cmd_append(&assert_run_cmd,
                    nob_temp_sprintf("tests/%s/%s", *test_file, "assertion"));
 
-    int result = nob_cmd_run(&assert_run_cmd, .async = &procs);
-    if (!result) {
-      nob_log(INFO, "assertion failed for test");
-      continue;
-    }
-
+    // STORE_CMD(assert_run_cmd);
+    nob_cmd_run(&assert_run_cmd, .async = &procs);
+    // PUT_PID();
     nob_temp_rewind(mark);
   }
 
-  for (size_t i = 0; i < procs.count; ++i) {
-    if (!nob_proc_wait(procs.items[i])) {
+  nob_da_foreach(Nob_Proc, it, &procs) {
+    if (!nob_proc_wait(*it)) {
+      // nob_log(ERROR, RED("proc %d failed (%s)"), *it, (char *)GET_PID(*it));
       TestResult t = (TestResult){.error = "failed to run assertion for test",
                                   .success = 0};
       nob_da_append(&assertions, t);
