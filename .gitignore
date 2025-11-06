@@ -7,4 +7,9 @@ tests/**/out
 *.dSYM
 test
 tests/**/*.c.h
+tests/**/*.cc-runner-defs.c
+tests/**/*.cc-runner-main.c
+tests/**/*.cct-final.c
+tests/**/*.cct-runner
+tests/**/*.comptime_safe.c
 .DS_Store
