@@ -33,6 +33,7 @@ typedef struct {
   _Comptime_Buffer_Vtable TopLevel;
   int _StatementIndex;
   int _PlaceholderIndex;
+  const char *(*InferType)(void);
 } _ComptimeCtx;
 #endif
 
@@ -54,6 +55,8 @@ typedef struct {
 
 int _Comptime__sb_appendf(_Comptime__String_Builder *sb, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
+
+const char *_Comptime_InferType(void) { return "__auto_type"; }
 
 #define _Comptime__da_append(da, item)                                         \
   do {                                                                         \
@@ -114,7 +117,8 @@ __Define_Comptime_Buffer(TopLevel);
                              .appendf = _Comptime_Buffer_appendf_TopLevel},    \
                      .Inline = (_Comptime_Buffer_Vtable){                      \
                          ._sb = &_Comptime_Buffer_Inline_##index,              \
-                         .appendf = _Comptime_Buffer_appendf_Inline_##index}})
+                         .appendf = _Comptime_Buffer_appendf_Inline_##index},  \
+                     .InferType = _Comptime_InferType})
 
 #define __Comptime_Register_Main_Exec(index) __Comptime_Register(index, -1)
 

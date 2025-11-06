@@ -22,5 +22,6 @@ typedef struct {
   _Comptime_Buffer_Vtable TopLevel;
   int _StatementIndex;
   int _PlaceholderIndex;
+  const char *(*InferType)(void);
 } _ComptimeCtx;
 #endif

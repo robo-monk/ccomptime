@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include "../../ccomptime.h"
 #define var                                                                    \
   _ComptimeType(_ComptimeCtx.Inline.appendf("%s", _ComptimeCtx.InferType()))
@@ -6,11 +7,10 @@
   _ComptimeType(                                                               \
       _ComptimeCtx.Inline.appendf("const %s", _ComptimeCtx.InferType()))
 
-#define fn var
-#define proc let
-
-fn main() {
+int main() {
   var hi = "hello there";
   let yes = 10;
+  printf("hi = %s\n", hi);
+  printf("yes = %d\n", yes);
   return 0;
 }
