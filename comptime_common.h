@@ -60,6 +60,13 @@ typedef struct {
     Slice *items;
     size_t count, capacity;
   } comptime_stmts;
+
+  // Stores the source of the node following each comptime statement
+  // Used for introspection (e.g., getting type info of struct after decorator)
+  struct {
+    Slice *items;
+    size_t count, capacity;
+  } comptime_next_nodes;
 } WalkContext;
 
 int min_int(int a, int b);

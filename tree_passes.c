@@ -293,8 +293,14 @@ static void register_comptime_dependencies(WalkContext *const ctx,
     if (!local.call_expression_root && local.preproc_def_root &&
         local.child_idx == 1)
       fatal("Redefining `_Comptime` macro is not supported");
-    if (!local.call_expression_root)
+    if (!local.call_expression_root) {
+      Slice node_slice = ts_node_range(node, src);
+      fprintf(stderr, "Invalid _Comptime at: %.*s\n", node_slice.len < 100 ? node_slice.len : 100, node_slice.start);
+      fprintf(stderr, "Parent nodes: func_def=%p, decl=%p, typedef=%p, call_expr=%p\n",
+              (void*)local.function_definition_root, (void*)local.decleration_root,
+              (void*)local.type_definition_root, (void*)local.call_expression_root);
       fatal("Invalid use of _Comptime");
+    }
 
     r = parse_comptime_call_expr2(*local.call_expression_root, src);
     nob_log(VERBOSE, BOLD("Parsed _Comptime call : ") "%.*s", r.len, r.start);
@@ -365,8 +371,29 @@ static void register_comptime_dependencies(WalkContext *const ctx,
                      type_name.len, (void *)1);
       }
 
+      // Capture the type definition for introspection
+      Slice type_def = ts_node_range(*local.type_definition_root, src);
+      da_append(&ctx->comptime_next_nodes, type_def);
+
+    } else if (local.decleration_root) {
+      // Capture declaration for introspection
+      Slice decl = ts_node_range(*local.decleration_root, src);
+      da_append(&ctx->comptime_next_nodes, decl);
+    } else if (local.function_definition_root) {
+      // Capture function definition for introspection
+      Slice func_def = ts_node_range(*local.function_definition_root, src);
+      da_append(&ctx->comptime_next_nodes, func_def);
     } else {
       nob_log(VERBOSE, ORANGE("Stripping top level comptime block"));
+      // No next node for standalone comptime blocks
+      Slice empty = {.start = NULL, .len = 0};
+      da_append(&ctx->comptime_next_nodes, empty);
+
+      // Mark the call expression for removal
+      if (local.call_expression_root) {
+        nob_da_append(&ctx->to_be_removed,
+                      ts_node_range(*local.call_expression_root, src));
+      }
     }
 
     da_append(&ctx->comptime_stmts, r);

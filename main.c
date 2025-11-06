@@ -45,15 +45,34 @@ static int compare_slice_start(const void *lhs, const void *rhs) {
 
 static void build_runner_snippets(WalkContext *ctx,
                                   String_Builder *runner_definitions,
-                                  String_Builder *runner_main) {
+                                  String_Builder *runner_main,
+                                  String_Builder *runner_next_nodes) {
   int comptime_count = 0;
 
   for (size_t i = 0; i < ctx->comptime_stmts.count; i++) {
     Slice stmt = ctx->comptime_stmts.items[i];
+    Slice next_node = ctx->comptime_next_nodes.items[i];
     int placeholder_index = comptimetype_placeholder_for_stmt(ctx, i);
 
     nob_sb_appendf(runner_definitions, "\n__Comptime_Statement_Fn(%d, %.*s)\n",
                    comptime_count, stmt.len, stmt.start);
+
+    // Store next node data as byte array to avoid escaping issues
+    if (next_node.start != NULL && next_node.len > 0) {
+      nob_sb_appendf(runner_next_nodes,
+                     "const char _Comptime_NextNode_%d[] = {", comptime_count);
+      for (int j = 0; j < next_node.len; j++) {
+        if (j > 0) nob_sb_append_cstr(runner_next_nodes, ",");
+        nob_sb_appendf(runner_next_nodes, "%d", (unsigned char)next_node.start[j]);
+      }
+      nob_sb_appendf(runner_next_nodes, ",0};\nsize_t _Comptime_NextNode_%d_len = %d;\n",
+                     comptime_count, next_node.len);
+    } else {
+      nob_sb_appendf(runner_next_nodes,
+                     "const char *_Comptime_NextNode_%d = NULL;\n"
+                     "size_t _Comptime_NextNode_%d_len = 0;\n",
+                     comptime_count, comptime_count);
+    }
 
     if (placeholder_index >= 0) {
       nob_sb_appendf(
@@ -175,6 +194,12 @@ static void run_file(Context *ctx) {
       cct_expand_macros(parser, raw_tree, &macros, ctx->raw_source->items,
                         ctx->raw_source->count, &pp_source);
 
+  nob_log(NOB_VERBOSE, "Preprocessed source length: %zu", pp_source.count);
+  if (ctx->parsed_argv->cct_flags & CliComptimeFlag_Debug) {
+    fprintf(stderr, "\n=== Preprocessed Source ===\n%.*s\n=== End ===\n",
+            (int)pp_source.count, pp_source.items);
+  }
+
   String_Builder processed_source = {0};
   WalkContext walk_ctx = {0};
   TSTree *clean_tree = cct_correct_comptimetype_nodes(
@@ -186,7 +211,8 @@ static void run_file(Context *ctx) {
 
   String_Builder runner_definitions = {0};
   String_Builder runner_main = {0};
-  build_runner_snippets(&walk_ctx, &runner_definitions, &runner_main);
+  String_Builder runner_next_nodes = {0};
+  build_runner_snippets(&walk_ctx, &runner_definitions, &runner_main, &runner_next_nodes);
 
   String_Builder comptime_safe_source = {0};
   build_comptime_safe_source(&walk_ctx, processed_source.items,
@@ -202,6 +228,9 @@ static void run_file(Context *ctx) {
 
   nob_write_entire_file(ctx->runner_main_path, runner_main.items,
                         runner_main.count);
+
+  nob_write_entire_file(ctx->runner_next_nodes_path, runner_next_nodes.items,
+                        runner_next_nodes.count);
 
   nob_write_entire_file(ctx->gen_header_path, walk_ctx.out_h.items,
                         walk_ctx.out_h.count);
@@ -220,6 +249,7 @@ static void run_file(Context *ctx) {
       temp_sprintf("-D_INPUT_PROGRAM_PATH=\"%s\"", ctx->comptime_safe_path),
       temp_sprintf("-D_INPUT_COMPTIME_DEFS_PATH=\"%s\"", ctx->runner_defs_path),
       temp_sprintf("-D_INPUT_COMPTIME_MAIN_PATH=\"%s\"", ctx->runner_main_path),
+      temp_sprintf("-D_INPUT_COMPTIME_NEXT_NODES_PATH=\"%s\"", ctx->runner_next_nodes_path),
       temp_sprintf("-D_OUTPUT_HEADERS_PATH=\"%s\"", ctx->gen_header_path));
 
   if (!nob_cmd_run(&build_cmd))
@@ -234,6 +264,7 @@ static void run_file(Context *ctx) {
 
   sb_free(runner_definitions);
   sb_free(runner_main);
+  sb_free(runner_next_nodes);
   sb_free(comptime_safe_source);
   sb_free(walk_ctx.out_h);
 
@@ -300,6 +331,7 @@ int main(int argc, char **argv) {
 
     da_append(&files_to_remove, ctx.runner_main_path);
     da_append(&files_to_remove, ctx.runner_defs_path);
+    da_append(&files_to_remove, ctx.runner_next_nodes_path);
     da_append(&files_to_remove, ctx.comptime_safe_path);
     da_append(&files_to_remove, ctx.runner_exepath);
     da_append(&files_to_remove, ctx.final_out_path);
