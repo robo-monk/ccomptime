@@ -1,5 +1,6 @@
-
 #include "./test.h"
+#define HASHMAP_IMPLEMENTATION
+#include "../deps/hashmap/hashmap.h"
 
 static int total_tests_run = 0;
 
@@ -29,16 +30,29 @@ static inline double ms_since(struct timespec start) {
 
 // static const size_t test_files_len = sizeof(test_files) /
 // sizeof(test_files[0]);
+
 int main(int argc, char **argv) {
+
   struct timespec t0;
   clock_gettime(CLOCK_MONOTONIC, &t0);
   nob_minimal_log_level = NOB_INFO;
   NOB_GO_REBUILD_URSELF_PLUS(argc, argv, "tests/test.h");
 
+  // nob test pattern (for now pattern is a fuzzy strstr includes against the
+  // test names)
+  const char *match_pattern = NULL;
+  nob_log(INFO, "argc %d", argc);
+  if (argc == 3) {
+    match_pattern = argv[2];
+  }
+
   Nob_File_Paths tests = {0};
   nob_read_entire_dir("tests", &tests);
 
-  for (ssize_t i = tests.count-1; i >= 0; i--) {
+  const int MAX_PROCS = nob_nprocs() * 2;
+
+  int skipped = 0;
+  for (ssize_t i = tests.count - 1; i >= 0; i--) {
     if (strcmp(tests.items[i], ".") == 0 || strcmp(tests.items[i], "..") == 0 ||
         strcmp(tests.items[i], "test.h") == 0 ||
         strcmp(tests.items[i], "test.c") == 0) {
@@ -46,10 +60,22 @@ int main(int argc, char **argv) {
       continue;
     }
 
-    if (strstr(tests.items[i], "_skip") != NULL) {
-      nob_log(WARNING, YELLOW("Skipping test %s"), tests.items[i]);
-      nob_da_remove_unordered(&tests, i);
-      continue;
+    if (match_pattern) {
+      if (strstr(tests.items[i], match_pattern) == NULL) {
+        nob_log(WARNING, YELLOW("Skipping test %s"), tests.items[i]);
+        nob_da_remove_unordered(&tests, i);
+        skipped++;
+        continue;
+      } else {
+        nob_log(INFO, PURPLE("Matched test %s"), tests.items[i]);
+      }
+    } else {
+      if (strstr(tests.items[i], "_skip") != NULL) {
+        nob_log(WARNING, YELLOW("Skipping test %s"), tests.items[i]);
+        nob_da_remove_unordered(&tests, i);
+        skipped++;
+        continue;
+      }
     }
   }
 
@@ -73,11 +99,12 @@ int main(int argc, char **argv) {
     nob_cmd_append(&compile_cmd, "-o",
                    nob_temp_sprintf("tests/%s/%s", *test_file, "out"));
 
-    nob_cmd_run(&compile_cmd, .async = &procs,
-                .stdout_path = nob_temp_sprintf("tests/%s/%s", *test_file,
-                                                "comp-stdout.txt"),
-                .stderr_path = nob_temp_sprintf("tests/%s/%s", *test_file,
-                                                "comp-stderr.txt"));
+    int success = nob_cmd_run(&compile_cmd, .async = &procs,
+                              .stdout_path = nob_temp_sprintf(
+                                  "tests/%s/%s", *test_file, "comp-stdout.txt"),
+                              .stderr_path = nob_temp_sprintf(
+                                  "tests/%s/%s", *test_file, "comp-stderr.txt"),
+                              .max_procs = MAX_PROCS);
 
     const char *assertion_path =
         nob_temp_sprintf("tests/%s/%s", *test_file, "assertion.c");
@@ -95,8 +122,8 @@ int main(int argc, char **argv) {
     nob_cmd_append(&assert_compile_cmd, assertion_path);
     nob_cmd_append(&assert_compile_cmd, "-o",
                    nob_temp_sprintf("tests/%s/%s", *test_file, "assertion"));
-    nob_cmd_run(&assert_compile_cmd, .async = &procs);
 
+    nob_cmd_run(&assert_compile_cmd, .async = &procs, .max_procs = MAX_PROCS);
     nob_temp_rewind(mark);
   }
 
@@ -105,6 +132,7 @@ int main(int argc, char **argv) {
     TestResult *items;
   } assertions = {0};
 
+  // int success = nob_procs_flush(&procs);
   nob_da_foreach(Nob_Proc, it, &procs) {
     if (!nob_proc_wait(*it)) {
       TestResult t = (TestResult){.error = "failed to compile", .success = 0};
@@ -122,11 +150,13 @@ int main(int argc, char **argv) {
     Nob_Cmd exe_cmd = {0};
     nob_cmd_append(&exe_cmd,
                    nob_temp_sprintf("tests/%s/%s", *test_file, "out"));
+
     nob_cmd_run(&exe_cmd, .async = &procs,
                 .stdout_path = nob_temp_sprintf("tests/%s/%s", *test_file,
                                                 "exec-stdout.txt"),
                 .stderr_path = nob_temp_sprintf("tests/%s/%s", *test_file,
-                                                "exec-stderr.txt"));
+                                                "exec-stderr.txt"),
+                .max_procs = MAX_PROCS);
 
     nob_temp_rewind(mark);
   }
@@ -135,6 +165,7 @@ int main(int argc, char **argv) {
     if (!nob_proc_wait(*it)) {
       TestResult t = (TestResult){.error = "failed to run test", .success = 0};
       nob_da_append(&assertions, t);
+      continue;
     }
   }
   procs.count = 0;
@@ -149,17 +180,12 @@ int main(int argc, char **argv) {
     nob_cmd_append(&assert_run_cmd,
                    nob_temp_sprintf("tests/%s/%s", *test_file, "assertion"));
 
-    int result = nob_cmd_run(&assert_run_cmd, .async = &procs);
-    if (!result) {
-      nob_log(INFO, "assertion failed for test");
-      continue;
-    }
-
+    nob_cmd_run(&assert_run_cmd, .async = &procs, .max_procs = MAX_PROCS);
     nob_temp_rewind(mark);
   }
 
-  for (size_t i = 0; i < procs.count; ++i) {
-    if (!nob_proc_wait(procs.items[i])) {
+  nob_da_foreach(Nob_Proc, it, &procs) {
+    if (!nob_proc_wait(*it)) {
       TestResult t = (TestResult){.error = "failed to run assertion for test",
                                   .success = 0};
       nob_da_append(&assertions, t);
@@ -172,9 +198,17 @@ int main(int argc, char **argv) {
   nob_da_foreach(const char *, test_file, &tests) {
 
     Nob_String_Builder results = {0};
-    nob_read_entire_file(
-        nob_temp_sprintf("tests/%s/%s", *test_file, "assertion-results.txt"),
-        &results);
+    if (!nob_read_entire_file(nob_temp_sprintf("tests/%s/%s", *test_file,
+                                               "assertion-results.txt"),
+                              &results)) {
+      TestResult t = {
+          .success = 0,
+          .error = strdup(nob_temp_sprintf(
+              "assertion %s crashed or produced no output", *test_file)),
+          .message = ""};
+      nob_da_append(&assertions, t);
+      continue;
+    };
 
     TestResults tr = {0};
     TestResults_parse(&results, &tr);
@@ -217,8 +251,13 @@ int main(int argc, char **argv) {
 
   printf("\n\n================================ TEST SUMMARY "
          "================================\n");
-  printf("Total    : %d\n", failed + passed);
+  printf("Total    : %d\n", failed + passed + skipped);
   printf(GREEN("Passed   : %d\n"), passed);
+  if (skipped) {
+    printf(YELLOW("Skipped  : %d\n"), skipped);
+  } else {
+    printf(("Skipped  : %d\n"), skipped);
+  }
   if (failed) {
     printf(RED("Failed   : %d\n"), failed);
   } else {

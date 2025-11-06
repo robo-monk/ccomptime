@@ -1167,8 +1167,12 @@ NOBDEF bool nob_cmd_run_opt(Nob_Cmd *cmd, Nob_Cmd_Opt opt) {
     while (opt.async->count >= max_procs) {
       for (size_t i = 0; i < opt.async->count; ++i) {
         int ret = nob__proc_wait_async(opt.async->items[i], 1);
-        if (ret < 0)
-          nob_return_defer(false);
+        if (ret < 0) {
+          nob_log(NOB_ERROR, "cmd with %d pid failed", opt.async->items[i]);
+          nob_da_remove_unordered(opt.async, i); // my addition
+          // nob_return_defer(false);
+          break;
+        }
         if (ret) {
           nob_da_remove_unordered(opt.async, i);
           break;
