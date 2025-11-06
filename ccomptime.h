@@ -1,6 +1,11 @@
 #include <stdlib.h>
 #ifndef _COMPTIME_RUNTIME_H
 #define _COMPTIME_RUNTIME_H
+
+#ifndef _Comptime
+#define _Comptime(...) /* comptime block has not been computed yet */
+#endif
+
 typedef struct {
   char *items;
   size_t count;

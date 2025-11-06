@@ -126,6 +126,9 @@ static void build_header_prelude(WalkContext *ctx) {
   sb_appendf(
       &ctx->out_h,
       "#pragma once\n"
+      "#ifdef _Comptime\n"
+      "#undef _Comptime\n"
+      "#endif\n"
       "#ifdef _COMPILING\n"
       "#define _Comptime(...) /* stripped comptime */\n"
       "#define _ComptimeType(x) /* stripped comptime type */ \n"
