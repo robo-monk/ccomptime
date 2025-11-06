@@ -5,30 +5,34 @@
 #include "main.c.h"
 
 int main(void) {
-  _Comptime({
-    FILE *f = fopen("tests/file_io_embed/config.txt", "r");
+
+  static const char *config_data = _Comptime({
+    FILE *f = fopen("tests/file_to_io_embed/config.txt", "r");
     if (!f) {
       fprintf(stderr, "Failed to open config.txt\n");
+      _ComptimeCtx.Inline.appendf(
+          "\"\"; static_assert(0 && 'Could not open file');");
       return;
     }
 
     char line[256];
-    _ComptimeCtx.TopLevel.appendf("static const char *config_data = \"");
+    _ComptimeCtx.Inline.appendf("\"");
     while (fgets(line, sizeof(line), f)) {
       // Escape newlines for string literal
       for (char *p = line; *p; p++) {
         if (*p == '\n') {
-          _ComptimeCtx.TopLevel.appendf("\\n");
+          _ComptimeCtx.Inline.appendf("\\n");
         } else if (*p == '"') {
-          _ComptimeCtx.TopLevel.appendf("\\\"");
+          _ComptimeCtx.Inline.appendf("\\\"");
         } else if (*p == '\\') {
-          _ComptimeCtx.TopLevel.appendf("\\\\");
+          _ComptimeCtx.Inline.appendf("\\\\");
         } else {
-          _ComptimeCtx.TopLevel.appendf("%c", *p);
+          _ComptimeCtx.Inline.appendf("%c", *p);
         }
       }
     }
-    _ComptimeCtx.TopLevel.appendf("\";\n");
+    _ComptimeCtx.Inline.appendf("\"");
+    // _ComptimeCtxInline.appendf("\";\n");
     fclose(f);
   });
 

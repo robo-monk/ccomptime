@@ -23,7 +23,8 @@ static bool build_tree_sitter_runtime(void) {
   nob_log(INFO, "Compiling runtime: %s", TS_RT_SRC);
   nob_cc(&cmd);
   nob_cc_flags(&cmd);
-  nob_cmd_append(&cmd, "-O3", "-c", TS_RT_SRC, "-I", TS_RT_INC, "-I", "deps/tree_sitter/src", "-o", obj);
+  nob_cmd_append(&cmd, "-O3", "-c", TS_RT_SRC, "-I", TS_RT_INC, "-I",
+                 "deps/tree_sitter/src", "-o", obj);
   if (!nob_cmd_run(&cmd))
     return false;
 
@@ -50,8 +51,8 @@ static bool build_grammar_archive(void) {
   nob_log(INFO, "Compiling grammar: %s", GRAMMAR_PARSER);
   nob_cc(&cmd);
   nob_cc_flags(&cmd);
-  nob_cmd_append(&cmd, "-O3", "-c", GRAMMAR_PARSER, "-I", TS_RT_INC, "-I", "deps/tree_sitter/src", "-o",
-                 obj_parser);
+  nob_cmd_append(&cmd, "-O3", "-c", GRAMMAR_PARSER, "-I", TS_RT_INC, "-I",
+                 "deps/tree_sitter/src", "-o", obj_parser);
   if (!nob_cmd_run(&cmd))
     return false;
 
@@ -179,6 +180,9 @@ int main(int argc, char **argv) {
     // now run the test runner
     nob_log(INFO, "Running test runner");
     nob_cmd_append(&cmd, BUILD_DIR "test");
+    for (int i = 1; i < argc; ++i) {
+      nob_cmd_append(&cmd, argv[i]);
+    }
     cmd_run(&cmd);
   }
   return 0;

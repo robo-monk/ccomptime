@@ -1,3 +1,0 @@
-APP_NAME=MyApplication
-VERSION=1.2.3
-AUTHOR=CompileTime
